@@ -6,8 +6,9 @@
   <title>RT Estimator for NOE</title>
   <style>
     body { font-family: sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; color: #333; }
-    .container { max-width: 650px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+    .container { max-width: 650px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); position: relative; }
     h1 { font-size: 1.2rem; text-align: center; margin-bottom: 15px; }
+    .version { position: absolute; top: 15px; right: 20px; font-size: 0.75rem; color: #999; }
     
     .tabs { display: flex; border-bottom: 2px solid #ddd; margin-bottom: 15px; }
     .tab-btn { flex: 1; padding: 10px; text-align: center; cursor: pointer; background: #f8f9fa; border: none; font-weight: bold; color: #666; transition: 0.2s; }
@@ -32,7 +33,6 @@
     .meter-container { width: 100%; height: 15px; background-color: #eee; border-radius: 5px; overflow: hidden; margin-bottom: 5px; }
     #meter-bar { width: 0%; height: 100%; background-color: #5cb85c; transition: width 0.05s ease-out; }
     
-    /* スマホでのスクロール干渉を防ぐ touch-action: none */
     canvas { width: 100%; height: 180px; background-color: #222; border-radius: 5px; margin-top: 5px; display: block; cursor: crosshair; touch-action: none; }
     .canvas-header { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 15px; margin-bottom: 2px;}
     .canvas-label { font-size: 0.85rem; color: #444; font-weight: bold;}
@@ -57,6 +57,7 @@
 <body>
 
 <div class="container">
+  <div class="version">v1.0.2</div>
   <h1>RT Estimator for NOE</h1>
 
   <div class="tabs">
@@ -218,6 +219,7 @@
     return slope >= 0 ? "計算不可" : (-60 / slope).toFixed(2) + "s";
   }
 
+  // 一括適用のロジック
   document.getElementById('setBtn').addEventListener('click', () => {
     if(!currentRawBuffer) return;
     const b = bandSelect.value;
@@ -225,21 +227,31 @@
     analysisData[b].cursorStartIdx = currentCursorStartIdx;
     analysisData[b].cursorEndIdx = currentCursorEndIdx;
     analysisData[b].manualRt = document.getElementById('manualResult').textContent;
-    analysisData[b].manualLevelStr = document.getElementById('manual-level').textContent.replace('区間: ', '');
     
-    const startDb = currentSchroederDB[currentCursorStartIdx];
-    const endDb = currentSchroederDB[currentCursorEndIdx];
+    // 操作された帯域には具体的なdB文字列を記録
+    const sourceLevelStr = document.getElementById('manual-level').textContent.replace('区間: ', '');
+    analysisData[b].manualLevelStr = sourceLevelStr;
+    
+    // ピークからの「時間枠（インデックスの差分）」を計算して他帯域に適用する
+    const offsetStart = currentCursorStartIdx - currentPeakIndex;
+    const offsetEnd = currentCursorEndIdx - currentPeakIndex;
 
     if (askApplyAll || b === 'overall') {
-      const ans = confirm(`設定した区間（${startDb.toFixed(1)} 〜 ${endDb.toFixed(1)} dB）を、他のすべての帯域にも適用しますか？`);
+      const startDb = currentSchroederDB[currentCursorStartIdx];
+      const endDb = currentSchroederDB[currentCursorEndIdx];
+      const ans = confirm(`設定した区間（${startDb.toFixed(1)} 〜 ${endDb.toFixed(1)} dB）と同じ時間枠を、他のすべての帯域にも適用しますか？`);
+      
       if (ans) {
         currentBands.forEach(band => {
           if (band === b) return;
           let d = analysisData[band];
-          d.cursorStartIdx = getDbIndex(d.schroederDB, d.peakIndex, startDb);
-          d.cursorEndIdx = getDbIndex(d.schroederDB, d.peakIndex, endDb);
+          // dBベースではなく、時間枠（オフセット）ベースで強制適用
+          d.cursorStartIdx = Math.max(0, Math.min(d.schroederDB.length - 1, d.peakIndex + offsetStart));
+          d.cursorEndIdx = Math.max(0, Math.min(d.schroederDB.length - 1, d.peakIndex + offsetEnd));
           d.manualRt = calcRTForIndices(d.schroederDB, d.peakIndex, d.cursorStartIdx, d.cursorEndIdx);
-          d.manualLevelStr = `${d.schroederDB[d.cursorStartIdx].toFixed(1)} 〜 ${d.schroederDB[d.cursorEndIdx].toFixed(1)} dB`;
+          
+          // その他の帯域は手動でレベルを狙ったわけではないので「-」とする
+          d.manualLevelStr = "-";
         });
       } else {
         if (b !== 'overall') askApplyAll = false;
@@ -405,7 +417,6 @@
     currentSchroederDB = data.schroederDB; currentPeakIndex = data.peakIndex;
     currentCursorStartIdx = data.cursorStartIdx; currentCursorEndIdx = data.cursorEndIdx;
     
-    // オートズーム：赤線（-25dB）が画面の「70%」の位置になるように倍率を逆算
     const viewStartIdx = Math.max(0, currentPeakIndex - Math.floor(sampleRate * 0.02));
     const totalViewable = currentSchroederDB.length - viewStartIdx;
     const targetDistance = Math.max(1, currentCursorEndIdx - viewStartIdx);
@@ -463,7 +474,6 @@
     }
   }
 
-  // ★ スマホ最適化：固定値を廃止し、常に「一番近い線」を確実に掴む
   function getMouseX(e) { return (e.touches ? e.touches[0].clientX : e.clientX) - document.getElementById('decayCanvas').getBoundingClientRect().left; }
   
   function handleDown(e) {
@@ -480,11 +490,14 @@
     const distStart = Math.abs(x - startX);
     const distEnd = Math.abs(x - endX);
     
-    // 無条件で近い方を掴む
-    if (distStart <= distEnd) {
+    const HIT_TOLERANCE = 40; 
+
+    if (distStart < HIT_TOLERANCE && distStart <= distEnd) {
       draggingCursor = 'start';
-    } else {
+    } else if (distEnd < HIT_TOLERANCE) {
       draggingCursor = 'end';
+    } else {
+      draggingCursor = null; 
     }
   }
 
@@ -498,7 +511,6 @@
     let targetIdx = Math.floor(viewStartIdx + (x / decayCtx.canvas.width) * viewSamples);
     targetIdx = Math.max(0, Math.min(targetIdx, currentSchroederDB.length - 1));
 
-    // ★ すり抜け（交差）の絶対防止ブロック
     if (draggingCursor === 'start') {
       currentCursorStartIdx = Math.min(targetIdx, currentCursorEndIdx - 10);
     } else {
@@ -508,7 +520,6 @@
     drawDecayCurve(); updateManualRTDisplay();
   }
 
-  // iOSのスクロール干渉を確実にブロックするために touchstart に preventDefault を付与
   const canvasEl = document.getElementById('decayCanvas');
   canvasEl.addEventListener('mousedown', handleDown);
   canvasEl.addEventListener('mousemove', handleMove);
