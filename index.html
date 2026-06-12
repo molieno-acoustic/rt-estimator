@@ -67,7 +67,7 @@
 <body>
 
 <div class="container">
-  <div class="version">v1.0.6</div>
+  <div class="version">v1.0.7</div>
   <h1>RT Estimator for NOE</h1>
 
   <div class="tabs">
@@ -154,9 +154,9 @@
 
       <h3>2. 測定前の設定（パラメータ）</h3>
       <ul>
-        <li><b>開始ディレイ (秒) 【デフォルト値: 3秒】</b><br>測定準備ボタンを押してからマイク監視が始まるまでの待機時間です。デバイスを机等に置く際の物音を拾わないための重要な設定です。</li>
-        <li><b>トリガー (dBFS) 【デフォルト値: -15dBFS】</b><br>マイクが「インパルス音が鳴った」と判断する音量のしきい値です。静かな部屋では -15〜-20、雑音がある場合は -10 付近に調整します。</li>
-        <li><b>録音時間 (秒) 【デフォルト値: 1.0秒】</b><br>一般的なオフィスや住宅では、S/N比の観点および解析スピード向上のため、<b>1.0秒</b>で十分に正確な測定が可能です。よく響く空間では長めに設定してください。</li>
+        <li><b>開始ディレイ (秒) 【推奨値: 3秒】</b><br>測定準備ボタンを押してからマイク監視が始まるまでの待機時間です。デバイスを机等に置く際の物音を拾わないための重要な設定です。</li>
+        <li><b>トリガー (dBFS) 【推奨値: -15dBFS】</b><br>マイクが「インパルス音が鳴った」と判断する音量のしきい値です。静かな部屋では -15〜-20、雑音がある場合は -10 付近に調整します。</li>
+        <li><b>録音時間 (秒) 【推奨値: 1.0秒】</b><br>一般的なオフィスや住宅では、S/N比の観点および解析スピード向上のため、<b>1.0秒</b>で十分に正確な測定が可能です。よく響く空間では長めに設定してください。</li>
       </ul>
 
       <h3>3. 測定手順</h3>
@@ -284,7 +284,6 @@
     return slope >= 0 ? "計算不可" : (-60 / slope).toFixed(2) + "s";
   }
 
-  // ★ 一括登録のセットロジック（文言変更）
   document.getElementById('setBtn').addEventListener('click', () => {
     if(!currentRawBuffer) return;
     const b = bandSelect.value;
@@ -302,7 +301,6 @@
     if (askApplyAll || b === 'overall') {
       const startDb = currentSchroederDB[currentCursorStartIdx];
       const endDb = currentSchroederDB[currentCursorEndIdx];
-      // ※「時間枠」を「時間区間」に修正
       const ans = confirm(`設定した区間（${startDb.toFixed(1)} 〜 ${endDb.toFixed(1)} dB）と同じ時間区間を、他のすべての帯域にも適用しますか？`);
       
       if (ans) {
@@ -334,7 +332,19 @@
   startBtn.addEventListener('click', async () => {
     startBtn.disabled = true;
     try {
-      if(!streamGlobal) streamGlobal = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+      // ★ 修正箇所: Chrome/Android向けに強力なAGC/ノイズキャンセリングの無効化オプションを追加
+      const constraints = {
+        audio: { 
+          echoCancellation: false, 
+          noiseSuppression: false, 
+          autoGainControl: false,
+          googEchoCancellation: false,
+          googAutoGainControl: false,
+          googNoiseSuppression: false,
+          googHighpassFilter: false
+        } 
+      };
+      if(!streamGlobal) streamGlobal = await navigator.mediaDevices.getUserMedia(constraints);
       
       let delay = parseInt(document.getElementById('delayInput').value, 10) || 0;
       if (delay > 0) {
