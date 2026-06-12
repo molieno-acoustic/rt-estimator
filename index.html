@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>RT Estimator for NOE - Step7</title>
+  <title>RT Estimator for NOE</title>
   <style>
     body { font-family: sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; color: #333; }
     .container { max-width: 650px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
@@ -32,7 +32,7 @@
     .meter-container { width: 100%; height: 15px; background-color: #eee; border-radius: 5px; overflow: hidden; margin-bottom: 5px; }
     #meter-bar { width: 0%; height: 100%; background-color: #5cb85c; transition: width 0.05s ease-out; }
     
-    canvas { width: 100%; height: 160px; background-color: #222; border-radius: 5px; margin-top: 5px; display: block; cursor: crosshair; }
+    canvas { width: 100%; height: 180px; background-color: #222; border-radius: 5px; margin-top: 5px; display: block; cursor: crosshair; touch-action: none; }
     .canvas-header { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 15px; margin-bottom: 2px;}
     .canvas-label { font-size: 0.85rem; color: #444; font-weight: bold;}
     
@@ -56,7 +56,7 @@
 <body>
 
 <div class="container">
-  <h1>RT Estimator for NOE (Step 7)</h1>
+  <h1>RT Estimator for NOE</h1>
 
   <div class="tabs">
     <button class="tab-btn active" onclick="switchTab('measure')">測定・グラフ分析</button>
@@ -74,7 +74,7 @@
     </div>
     <div class="control-group">
       <label for="recordTimeInput">録音時間 (秒): </label>
-      <input type="number" id="recordTimeInput" value="3.0" step="0.5" min="1" max="5">
+      <input type="number" id="recordTimeInput" value="1.0" step="0.5" min="0.5" max="5">
     </div>
 
     <button id="startBtn" class="main-btn">測定準備（マイクを許可）</button>
@@ -111,9 +111,9 @@
 
     <div class="canvas-header">
       <div class="canvas-label">減衰曲線 (+5dB〜-65dB)</div>
-      <div style="font-size: 0.8rem;">横軸拡大: <input type="range" id="zoomSlider" min="1" max="10" step="0.1" value="1" style="width:70px; vertical-align:middle;"></div>
+      <div style="font-size: 0.8rem;">横軸拡大: <input type="range" id="zoomSlider" min="1" max="30" step="0.1" value="1" style="width:70px; vertical-align:middle;"></div>
     </div>
-    <canvas id="decayCanvas" width="600" height="200"></canvas>
+    <canvas id="decayCanvas" width="600" height="180"></canvas>
   </div>
 
   <div id="view-details" class="tab-content">
@@ -127,27 +127,25 @@
       <tbody>
         </tbody>
     </table>
-    <div style="font-size: 0.8rem; color: #666; margin-top: 10px;">
-      ※ 「測定・グラフ分析」タブで各帯域のグラフを確認し、「結果をセット」ボタンを押すと、この表の手動RT60が更新されます。
-    </div>
     
     <button id="csvBtn" class="main-btn btn-success">📊 CSVダウンロード</button>
   </div>
 </div>
 
 <script>
-  let audioContext; let microphone; let processor;
+  let audioContext; let microphone; let processor; let streamGlobal = null;
   let isRecording = false; let isWaitingTrigger = false;
   let sampleRate = 44100; let currentRawBuffer = null;
   const PRE_BUFFER_SEC = 0.1;
   
-  // 帯域リストの定義 (16kHzまで対応)
   const BANDS_1_1 = ['overall', '125', '250', '500', '1000', '2000', '4000', '8000', '16000'];
   const BANDS_1_3 = ['overall', '100', '125', '160', '200', '250', '315', '400', '500', '630', '800', '1000', '1250', '1600', '2000', '2500', '3150', '4000', '5000', '6300', '8000', '10000', '12500', '16000'];
   
   let currentOctaveMode = '1/1';
   let currentBands = BANDS_1_1;
   let analysisData = {};
+  
+  let askApplyAll = true;
 
   const decayCtx = document.getElementById('decayCanvas').getContext('2d');
   const zoomSlider = document.getElementById('zoomSlider');
@@ -156,13 +154,14 @@
   const startBtn = document.getElementById('startBtn');
   const csvBtn = document.getElementById('csvBtn');
 
-  // 初期化
+  let currentSchroederDB, currentPeakIndex, currentCursorStartIdx, currentCursorEndIdx, draggingCursor = null;
+
   function initAnalysisData() {
     analysisData = {};
     currentBands.forEach(b => {
       analysisData[b] = {
         rt10: '-', rt20: '-', rt30: '-', manualRt: '-', manualLevelStr: '-',
-        cursorStartRatio: 0.05, cursorEndRatio: 0.2, schroederDB: null, peakIndex: 0
+        cursorStartIdx: -1, cursorEndIdx: -1, schroederDB: null, peakIndex: 0
       };
     });
   }
@@ -178,16 +177,12 @@
     });
   }
 
-  // モード切替（1/1 Oct ⇔ 1/3 Oct）
   document.querySelectorAll('input[name="octaveMode"]').forEach(radio => {
     radio.addEventListener('change', (e) => {
       currentOctaveMode = e.target.value;
       currentBands = currentOctaveMode === '1/1' ? BANDS_1_1 : BANDS_1_3;
-      updateBandSelectUI();
-      initAnalysisData();
-      updateDetailsTable();
+      updateBandSelectUI(); initAnalysisData(); updateDetailsTable();
       decayCtx.clearRect(0, 0, decayCtx.canvas.width, decayCtx.canvas.height);
-      
       if (currentRawBuffer) {
         statusDisplay.textContent = "モード切替による再解析中..."; 
         statusDisplay.style.color = "#f0ad4e";
@@ -196,8 +191,7 @@
     });
   });
 
-  updateBandSelectUI();
-  initAnalysisData();
+  updateBandSelectUI(); initAnalysisData();
 
   function switchTab(tabId) {
     document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
@@ -206,78 +200,132 @@
     event.currentTarget.classList.add('active');
   }
 
+  function getDbIndex(dbArray, peakIdx, targetDb) {
+    for(let i = peakIdx; i < dbArray.length; i++) {
+      if(dbArray[i] <= targetDb) return i;
+    }
+    return dbArray.length - 1;
+  }
+
+  function calcRTForIndices(dbArray, peakIdx, idx1, idx2) {
+    const startIdx = Math.min(idx1, idx2); const endIdx = Math.max(idx1, idx2);
+    if(endIdx - startIdx < 10) return "計算不可";
+    let x = [], y = [];
+    for(let i = startIdx; i <= endIdx; i++) { x.push((i - peakIdx) / sampleRate); y.push(dbArray[i]); }
+    let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0, n = x.length;
+    for (let i = 0; i < n; i++) { sumX += x[i]; sumY += y[i]; sumXY += x[i] * y[i]; sumXX += x[i] * x[i]; }
+    const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+    return slope >= 0 ? "計算不可" : (-60 / slope).toFixed(2) + "s";
+  }
+
   document.getElementById('setBtn').addEventListener('click', () => {
     if(!currentRawBuffer) return;
     const b = bandSelect.value;
-    analysisData[b].cursorStartRatio = currentCursorStartRatio;
-    analysisData[b].cursorEndRatio = currentCursorEndRatio;
+    
+    analysisData[b].cursorStartIdx = currentCursorStartIdx;
+    analysisData[b].cursorEndIdx = currentCursorEndIdx;
     analysisData[b].manualRt = document.getElementById('manualResult').textContent;
     analysisData[b].manualLevelStr = document.getElementById('manual-level').textContent.replace('区間: ', '');
-    updateDetailsTable();
     
+    const startDb = currentSchroederDB[currentCursorStartIdx];
+    const endDb = currentSchroederDB[currentCursorEndIdx];
+
+    if (askApplyAll || b === 'overall') {
+      const ans = confirm(`設定した区間（${startDb.toFixed(1)} 〜 ${endDb.toFixed(1)} dB）を、他のすべての帯域にも適用しますか？`);
+      if (ans) {
+        currentBands.forEach(band => {
+          if (band === b) return;
+          let d = analysisData[band];
+          d.cursorStartIdx = getDbIndex(d.schroederDB, d.peakIndex, startDb);
+          d.cursorEndIdx = getDbIndex(d.schroederDB, d.peakIndex, endDb);
+          d.manualRt = calcRTForIndices(d.schroederDB, d.peakIndex, d.cursorStartIdx, d.cursorEndIdx);
+          d.manualLevelStr = `${d.schroederDB[d.cursorStartIdx].toFixed(1)} 〜 ${d.schroederDB[d.cursorEndIdx].toFixed(1)} dB`;
+        });
+      } else {
+        if (b !== 'overall') askApplyAll = false;
+      }
+    }
+
+    updateDetailsTable();
     const bandName = b === 'overall' ? '全体' : (b >= 1000 ? (b/1000) + 'kHz' : b + 'Hz');
-    statusDisplay.textContent = `${bandName} の手動結果をセットしました！`;
+    statusDisplay.textContent = `${bandName} の手動結果をセットしました`;
     statusDisplay.style.color = "#00838f";
   });
 
   bandSelect.addEventListener('change', () => {
-    if(analysisData[bandSelect.value] && analysisData[bandSelect.value].schroederDB) {
-      loadBandData(bandSelect.value);
-    }
+    if(analysisData[bandSelect.value] && analysisData[bandSelect.value].schroederDB) loadBandData(bandSelect.value);
   });
 
   zoomSlider.addEventListener('input', () => { drawDecayCurve(); updateManualRTDisplay(); });
 
-  async function initAudio() {
+  startBtn.addEventListener('click', async () => {
+    startBtn.disabled = true;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
-      audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      sampleRate = audioContext.sampleRate;
-      processor = audioContext.createScriptProcessor(4096, 1, 1);
-      microphone = audioContext.createMediaStreamSource(stream);
-      microphone.connect(processor); processor.connect(audioContext.destination);
+      if(!streamGlobal) streamGlobal = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+      
+      let delay = parseInt(document.getElementById('delayInput').value, 10) || 0;
+      if (delay > 0) {
+        statusDisplay.textContent = `設置してください（残り ${delay} 秒）...`; statusDisplay.style.color = "#f0ad4e";
+        const interval = setInterval(() => { 
+          delay--; 
+          if (delay > 0) statusDisplay.textContent = `設置してください（残り ${delay} 秒）...`; 
+          else { clearInterval(interval); startMonitoring(); } 
+        }, 1000);
+      } else startMonitoring();
+    } catch(err) {
+      statusDisplay.textContent = "マイク許可エラー"; startBtn.disabled = false; console.error(err);
+    }
+  });
 
-      const triggerDbfs = parseFloat(document.getElementById('triggerInput').value);
-      const targetTotalSamples = parseFloat(document.getElementById('recordTimeInput').value) * sampleRate;
-      const maxPreBufferChunks = Math.ceil((PRE_BUFFER_SEC * sampleRate) / 4096);
+  function startMonitoring() {
+    if(!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    sampleRate = audioContext.sampleRate;
+    askApplyAll = true;
 
-      let recordedChunks = []; let preBufferChunks = []; let currentRecordedSamples = 0;
-      isWaitingTrigger = true; isRecording = false; currentRawBuffer = null;
-      statusDisplay.textContent = "手拍子待ち..."; statusDisplay.style.color = "#5cb85c";
+    if(processor) { processor.disconnect(); microphone.disconnect(); }
+    processor = audioContext.createScriptProcessor(4096, 1, 1);
+    microphone = audioContext.createMediaStreamSource(streamGlobal);
+    microphone.connect(processor); processor.connect(audioContext.destination);
 
-      processor.onaudioprocess = function(e) {
-        if (!isWaitingTrigger && !isRecording) return;
-        const dataCopy = new Float32Array(e.inputBuffer.getChannelData(0));
-        let maxPeak = 0;
-        for (let i = 0; i < dataCopy.length; i++) if (Math.abs(dataCopy[i]) > maxPeak) maxPeak = Math.abs(dataCopy[i]);
-        const dbfs = maxPeak > 0 ? 20 * Math.log10(maxPeak) : -Infinity;
-        document.getElementById('meter-bar').style.width = Math.max(0, Math.min(100, ((dbfs + 60) / 60) * 100)) + "%";
+    const triggerDbfs = parseFloat(document.getElementById('triggerInput').value);
+    const targetTotalSamples = parseFloat(document.getElementById('recordTimeInput').value) * sampleRate;
+    const maxPreBufferChunks = Math.ceil((PRE_BUFFER_SEC * sampleRate) / 4096);
 
-        if (isWaitingTrigger) {
-          if (dbfs > triggerDbfs) {
-            isWaitingTrigger = false; isRecording = true;
-            statusDisplay.textContent = "録音中..."; statusDisplay.style.color = "#d9534f";
-            recordedChunks.push(...preBufferChunks, dataCopy);
-            currentRecordedSamples += (preBufferChunks.length * 4096) + dataCopy.length;
-          } else {
-            preBufferChunks.push(dataCopy);
-            if (preBufferChunks.length > maxPreBufferChunks) preBufferChunks.shift();
-          }
-        } else if (isRecording) {
-          recordedChunks.push(dataCopy); currentRecordedSamples += dataCopy.length;
-          if (currentRecordedSamples >= targetTotalSamples) {
-            isRecording = false; processor.disconnect(); microphone.disconnect();
-            statusDisplay.textContent = "一括解析中..."; statusDisplay.style.color = "#f0ad4e";
-            startBtn.disabled = false; startBtn.textContent = "もう一度測定する";
-            
-            currentRawBuffer = new Float32Array(currentRecordedSamples);
-            let offset = 0;
-            for (let i = 0; i < recordedChunks.length; i++) { currentRawBuffer.set(recordedChunks[i], offset); offset += recordedChunks[i].length; }
-            processAllBands();
-          }
+    let recordedChunks = []; let preBufferChunks = []; let currentRecordedSamples = 0;
+    isWaitingTrigger = true; isRecording = false; currentRawBuffer = null;
+    statusDisplay.textContent = "手拍子待ち（マイク監視中）..."; statusDisplay.style.color = "#5cb85c";
+
+    processor.onaudioprocess = function(e) {
+      if (!isWaitingTrigger && !isRecording) return;
+      const dataCopy = new Float32Array(e.inputBuffer.getChannelData(0));
+      let maxPeak = 0;
+      for (let i = 0; i < dataCopy.length; i++) if (Math.abs(dataCopy[i]) > maxPeak) maxPeak = Math.abs(dataCopy[i]);
+      const dbfs = maxPeak > 0 ? 20 * Math.log10(maxPeak) : -Infinity;
+      document.getElementById('meter-bar').style.width = Math.max(0, Math.min(100, ((dbfs + 60) / 60) * 100)) + "%";
+
+      if (isWaitingTrigger) {
+        if (dbfs > triggerDbfs) {
+          isWaitingTrigger = false; isRecording = true;
+          statusDisplay.textContent = "録音中..."; statusDisplay.style.color = "#d9534f";
+          recordedChunks.push(...preBufferChunks, dataCopy);
+          currentRecordedSamples += (preBufferChunks.length * 4096) + dataCopy.length;
+        } else {
+          preBufferChunks.push(dataCopy);
+          if (preBufferChunks.length > maxPreBufferChunks) preBufferChunks.shift();
         }
-      };
-    } catch (err) { statusDisplay.textContent = "マイクエラー"; startBtn.disabled = false; }
+      } else if (isRecording) {
+        recordedChunks.push(dataCopy); currentRecordedSamples += dataCopy.length;
+        if (currentRecordedSamples >= targetTotalSamples) {
+          isRecording = false; processor.disconnect(); microphone.disconnect();
+          statusDisplay.textContent = "一括解析中..."; statusDisplay.style.color = "#f0ad4e";
+          startBtn.disabled = false; startBtn.textContent = "もう一度測定する";
+          currentRawBuffer = new Float32Array(currentRecordedSamples);
+          let offset = 0;
+          for (let i = 0; i < recordedChunks.length; i++) { currentRawBuffer.set(recordedChunks[i], offset); offset += recordedChunks[i].length; }
+          processAllBands();
+        }
+      }
+    };
   }
 
   async function filterBuffer(rawBuffer, freq) {
@@ -287,17 +335,19 @@
     audioBuf.copyToChannel(rawBuffer, 0);
     const source = offlineCtx.createBufferSource(); source.buffer = audioBuf;
     const filter = offlineCtx.createBiquadFilter();
-    
-    filter.type = 'bandpass'; 
-    filter.frequency.value = parseFloat(freq); 
+    filter.type = 'bandpass'; filter.frequency.value = parseFloat(freq); 
     filter.Q.value = currentOctaveMode === '1/1' ? 1.414 : 4.318; 
-    
     source.connect(filter); filter.connect(offlineCtx.destination); source.start();
     const rendered = await offlineCtx.startRendering();
     return rendered.getChannelData(0);
   }
 
   async function processAllBands() {
+    // 測定のたびに必ずすべてのデータをリセットし、過去のインデックスを引き継がない
+    initAnalysisData(); 
+    document.getElementById('manualResult').textContent = "- s";
+    document.getElementById('manual-level').textContent = "区間: - dB 〜 - dB";
+
     for (const b of currentBands) {
       const buffer = await filterBuffer(currentRawBuffer, b);
       let maxSquare = 0; let peakIndex = 0;
@@ -312,19 +362,19 @@
       for(let i = peakIndex; i < buffer.length; i++) schroederDB[i] = maxEnergy > 0 ? 10 * Math.log10(schroederDB[i] / maxEnergy) : -120;
       for(let i = 0; i < peakIndex; i++) schroederDB[i] = 0;
 
-      analysisData[b].schroederDB = schroederDB;
-      analysisData[b].peakIndex = peakIndex;
-      analysisData[b].rt10 = getRTAuto(schroederDB, peakIndex, -5, -15);
-      analysisData[b].rt20 = getRTAuto(schroederDB, peakIndex, -5, -25);
-      analysisData[b].rt30 = getRTAuto(schroederDB, peakIndex, -5, -35);
-      if (analysisData[b].cursorStartRatio === 0.05) {
-        analysisData[b].cursorStartRatio = (peakIndex + (sampleRate * 0.05)) / buffer.length;
-        analysisData[b].cursorEndRatio = (peakIndex + (sampleRate * 0.3)) / buffer.length;
-      }
+      let d = analysisData[b];
+      d.schroederDB = schroederDB; d.peakIndex = peakIndex;
+      d.rt10 = getRTAuto(schroederDB, peakIndex, -5, -15);
+      d.rt20 = getRTAuto(schroederDB, peakIndex, -5, -25);
+      d.rt30 = getRTAuto(schroederDB, peakIndex, -5, -35);
+      
+      // 今回の新しい波形に対して、正確な -5dB と -25dB の絶対インデックスを取り直す
+      d.cursorStartIdx = getDbIndex(schroederDB, peakIndex, -5);
+      d.cursorEndIdx = getDbIndex(schroederDB, peakIndex, -25);
+      d.manualRt = calcRTForIndices(schroederDB, peakIndex, d.cursorStartIdx, d.cursorEndIdx);
+      d.manualLevelStr = `${schroederDB[d.cursorStartIdx].toFixed(1)} 〜 ${schroederDB[d.cursorEndIdx].toFixed(1)} dB`;
     }
-    
-    loadBandData(bandSelect.value);
-    updateDetailsTable();
+    loadBandData(bandSelect.value); updateDetailsTable();
     statusDisplay.textContent = "解析完了"; statusDisplay.style.color = "#007BFF";
   }
 
@@ -352,22 +402,24 @@
     });
   }
 
-  let currentSchroederDB, currentPeakIndex, currentCursorStartRatio, currentCursorEndRatio, draggingCursor = null;
-
   function loadBandData(b) {
-    zoomSlider.value = 1;
     const data = analysisData[b];
-    currentSchroederDB = data.schroederDB;
-    currentPeakIndex = data.peakIndex;
-    currentCursorStartRatio = data.cursorStartRatio;
-    currentCursorEndRatio = data.cursorEndRatio;
+    currentSchroederDB = data.schroederDB; currentPeakIndex = data.peakIndex;
+    currentCursorStartIdx = data.cursorStartIdx; currentCursorEndIdx = data.cursorEndIdx;
     
+    // オートズーム：赤い線が必ず画面の70%の位置に来るように正確に逆算する
+    const viewStartIdx = Math.max(0, currentPeakIndex - Math.floor(sampleRate * 0.02));
+    const totalViewable = currentSchroederDB.length - viewStartIdx;
+    const targetDistance = Math.max(1, currentCursorEndIdx - viewStartIdx);
+    
+    const calculatedZoom = (totalViewable * 0.7) / targetDistance;
+    zoomSlider.value = Math.max(1, Math.min(30, calculatedZoom)).toFixed(1);
+
     document.getElementById('rt10').textContent = data.rt10;
     document.getElementById('rt20').textContent = data.rt20;
     document.getElementById('rt30').textContent = data.rt30;
     
-    drawDecayCurve();
-    updateManualRTDisplay();
+    drawDecayCurve(); updateManualRTDisplay();
   }
 
   function drawDecayCurve() {
@@ -384,10 +436,14 @@
     }
     decayCtx.stroke();
 
+    const viewStartIdx = Math.max(0, currentPeakIndex - Math.floor(sampleRate * 0.02));
+    const totalViewable = currentSchroederDB.length - viewStartIdx;
+    const viewSamples = Math.floor(totalViewable / zoomX);
+    
     decayCtx.beginPath(); decayCtx.strokeStyle = '#ffbb00'; decayCtx.lineWidth = 2;
-    const step = Math.max(1, Math.floor(currentSchroederDB.length / zoomX) / width);
+    const step = Math.max(1, viewSamples / width);
     for (let i = 0; i < width; i++) {
-      const idx = Math.floor(i * step);
+      const idx = Math.floor(viewStartIdx + i * step);
       if (idx >= currentSchroederDB.length) break;
       let y = ((5 - currentSchroederDB[idx]) / 70) * height; 
       if (y > height) y = height; if (y < 0) y = 0;
@@ -395,39 +451,71 @@
     }
     decayCtx.stroke();
 
-    const startX = currentCursorStartRatio * zoomX * width;
-    const endX = currentCursorEndRatio * zoomX * width;
-    if(startX <= width) { decayCtx.beginPath(); decayCtx.strokeStyle = '#00e5ff'; decayCtx.moveTo(startX, 0); decayCtx.lineTo(startX, height); decayCtx.stroke(); }
-    if(endX <= width) { decayCtx.beginPath(); decayCtx.strokeStyle = '#ff1744'; decayCtx.moveTo(endX, 0); decayCtx.lineTo(endX, height); decayCtx.stroke(); }
-    if(startX <= width || endX <= width) {
+    const startX = ((currentCursorStartIdx - viewStartIdx) / viewSamples) * width;
+    const endX = ((currentCursorEndIdx - viewStartIdx) / viewSamples) * width;
+    
+    if(startX >= 0 && startX <= width) { decayCtx.beginPath(); decayCtx.strokeStyle = '#00e5ff'; decayCtx.moveTo(startX, 0); decayCtx.lineTo(startX, height); decayCtx.stroke(); }
+    if(endX >= 0 && endX <= width) { decayCtx.beginPath(); decayCtx.strokeStyle = '#ff1744'; decayCtx.moveTo(endX, 0); decayCtx.lineTo(endX, height); decayCtx.stroke(); }
+    
+    const fillStartX = Math.max(0, Math.min(width, startX));
+    const fillEndX = Math.max(0, Math.min(width, endX));
+    if(fillStartX !== fillEndX) {
       decayCtx.fillStyle = 'rgba(255, 255, 255, 0.1)';
-      decayCtx.fillRect(Math.min(startX, endX), 0, Math.abs(Math.min(endX, width) - Math.min(startX, width)), height);
+      decayCtx.fillRect(Math.min(fillStartX, fillEndX), 0, Math.abs(fillEndX - fillStartX), height);
     }
   }
 
+  // 余計な処理を取り除き、タップ位置に最も近い線を素直に掴むロジック
   function getMouseX(e) { return (e.touches ? e.touches[0].clientX : e.clientX) - document.getElementById('decayCanvas').getBoundingClientRect().left; }
+  
   function handleDown(e) {
     if (!currentSchroederDB) return;
-    const r = getMouseX(e) / decayCtx.canvas.width; const zoomX = parseFloat(zoomSlider.value);
-    const sR = currentCursorStartRatio * zoomX; const eR = currentCursorEndRatio * zoomX;
-    if (Math.abs(r - sR) < 0.05) draggingCursor = 'start';
-    else if (Math.abs(r - eR) < 0.05) draggingCursor = 'end';
-    else { draggingCursor = Math.abs(r - sR) < Math.abs(r - eR) ? 'start' : 'end'; handleMove(e); }
+    const x = getMouseX(e);
+    const width = decayCtx.canvas.width;
+    const zoomX = parseFloat(zoomSlider.value);
+    const viewStartIdx = Math.max(0, currentPeakIndex - Math.floor(sampleRate * 0.02));
+    const viewSamples = Math.floor((currentSchroederDB.length - viewStartIdx) / zoomX);
+    
+    const startX = ((currentCursorStartIdx - viewStartIdx) / viewSamples) * width;
+    const endX = ((currentCursorEndIdx - viewStartIdx) / viewSamples) * width;
+    
+    const distStart = Math.abs(x - startX);
+    const distEnd = Math.abs(x - endX);
+    
+    const HIT_TOLERANCE = 40; 
+
+    if (distStart < HIT_TOLERANCE && distStart <= distEnd) {
+      draggingCursor = 'start';
+    } else if (distEnd < HIT_TOLERANCE) {
+      draggingCursor = 'end';
+    } else {
+      draggingCursor = null; 
+    }
   }
+
   function handleMove(e) {
     if (!draggingCursor) return; e.preventDefault();
-    let r = Math.max(0, Math.min(getMouseX(e) / decayCtx.canvas.width, 1)) / parseFloat(zoomSlider.value);
-    if (draggingCursor === 'start') currentCursorStartRatio = r; else currentCursorEndRatio = r;
+    const x = Math.max(0, Math.min(getMouseX(e), decayCtx.canvas.width));
+    const zoomX = parseFloat(zoomSlider.value);
+    const viewStartIdx = Math.max(0, currentPeakIndex - Math.floor(sampleRate * 0.02));
+    const viewSamples = Math.floor((currentSchroederDB.length - viewStartIdx) / zoomX);
+    
+    let targetIdx = Math.floor(viewStartIdx + (x / decayCtx.canvas.width) * viewSamples);
+    targetIdx = Math.max(0, Math.min(targetIdx, currentSchroederDB.length - 1));
+
+    if (draggingCursor === 'start') currentCursorStartIdx = targetIdx;
+    else currentCursorEndIdx = targetIdx;
+    
     drawDecayCurve(); updateManualRTDisplay();
   }
+
   document.getElementById('decayCanvas').addEventListener('mousedown', handleDown); document.getElementById('decayCanvas').addEventListener('mousemove', handleMove); window.addEventListener('mouseup', () => draggingCursor = null);
   document.getElementById('decayCanvas').addEventListener('touchstart', handleDown, {passive: false}); document.getElementById('decayCanvas').addEventListener('touchmove', handleMove, {passive: false}); window.addEventListener('touchend', () => draggingCursor = null);
 
   function updateManualRTDisplay() {
     if(!currentSchroederDB) return;
-    const idx1 = Math.floor(currentCursorStartRatio * currentSchroederDB.length);
-    const idx2 = Math.floor(currentCursorEndRatio * currentSchroederDB.length);
-    const startIdx = Math.min(idx1, idx2); const endIdx = Math.max(idx1, idx2);
+    const startIdx = Math.min(currentCursorStartIdx, currentCursorEndIdx);
+    const endIdx = Math.max(currentCursorStartIdx, currentCursorEndIdx);
     
     document.getElementById('manual-level').textContent = `区間: ${currentSchroederDB[startIdx].toFixed(1)} 〜 ${currentSchroederDB[endIdx].toFixed(1)} dB`;
 
@@ -440,42 +528,22 @@
     document.getElementById('manualResult').textContent = slope >= 0 ? "計算不可" : (-60 / slope).toFixed(2) + "s";
   }
 
-  startBtn.addEventListener('click', () => {
-    startBtn.disabled = true;
-    let delay = parseInt(document.getElementById('delayInput').value, 10) || 0;
-    if (delay > 0) {
-      statusDisplay.textContent = `残り ${delay} 秒...`; statusDisplay.style.color = "#f0ad4e";
-      const interval = setInterval(() => { delay--; if (delay > 0) statusDisplay.textContent = `残り ${delay} 秒...`; else { clearInterval(interval); initAudio(); } }, 1000);
-    } else initAudio();
-  });
-
-  // CSVダウンロード
   csvBtn.addEventListener('click', () => {
     let csv = '\uFEFF'; 
     csv += '帯域,自動RT10(s),自動RT20(s),自動RT30(s),手動RT60(s),手動区間(dB)\n';
-    
     currentBands.forEach(b => {
       const d = analysisData[b];
       const bandName = b === 'overall' ? 'Overall' : b;
       csv += `${bandName},${d.rt10},${d.rt20},${d.rt30},${d.manualRt},${d.manualLevelStr}\n`;
     });
-
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    
+    const a = document.createElement('a'); a.href = url;
     const now = new Date();
     const timeStr = `${now.getFullYear()}${('0'+(now.getMonth()+1)).slice(-2)}${('0'+now.getDate()).slice(-2)}_${('0'+now.getHours()).slice(-2)}${('0'+now.getMinutes()).slice(-2)}`;
     a.download = `RT_Estimator_for_NOE_${currentOctaveMode.replace('/', '')}Oct_${timeStr}.csv`;
-    
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
   });
-  
-  updateDetailsTable();
 </script>
 
 </body>
