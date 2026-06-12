@@ -57,7 +57,7 @@
 <body>
 
 <div class="container">
-  <div class="version">v1.0.2</div>
+  <div class="version">v1.0.3</div>
   <h1>RT Estimator for NOE</h1>
 
   <div class="tabs">
@@ -219,7 +219,6 @@
     return slope >= 0 ? "計算不可" : (-60 / slope).toFixed(2) + "s";
   }
 
-  // 一括適用のロジック
   document.getElementById('setBtn').addEventListener('click', () => {
     if(!currentRawBuffer) return;
     const b = bandSelect.value;
@@ -228,11 +227,9 @@
     analysisData[b].cursorEndIdx = currentCursorEndIdx;
     analysisData[b].manualRt = document.getElementById('manualResult').textContent;
     
-    // 操作された帯域には具体的なdB文字列を記録
     const sourceLevelStr = document.getElementById('manual-level').textContent.replace('区間: ', '');
     analysisData[b].manualLevelStr = sourceLevelStr;
     
-    // ピークからの「時間枠（インデックスの差分）」を計算して他帯域に適用する
     const offsetStart = currentCursorStartIdx - currentPeakIndex;
     const offsetEnd = currentCursorEndIdx - currentPeakIndex;
 
@@ -245,13 +242,10 @@
         currentBands.forEach(band => {
           if (band === b) return;
           let d = analysisData[band];
-          // dBベースではなく、時間枠（オフセット）ベースで強制適用
           d.cursorStartIdx = Math.max(0, Math.min(d.schroederDB.length - 1, d.peakIndex + offsetStart));
           d.cursorEndIdx = Math.max(0, Math.min(d.schroederDB.length - 1, d.peakIndex + offsetEnd));
           d.manualRt = calcRTForIndices(d.schroederDB, d.peakIndex, d.cursorStartIdx, d.cursorEndIdx);
-          
-          // その他の帯域は手動でレベルを狙ったわけではないので「-」とする
-          d.manualLevelStr = "-";
+          d.manualLevelStr = "-"; // 一括適用された側はハイフンにする（v1.0.2の仕様）
         });
       } else {
         if (b !== 'overall') askApplyAll = false;
@@ -463,19 +457,24 @@
     const startX = ((currentCursorStartIdx - viewStartIdx) / viewSamples) * width;
     const endX = ((currentCursorEndIdx - viewStartIdx) / viewSamples) * width;
     
-    if(startX >= 0 && startX <= width) { decayCtx.beginPath(); decayCtx.strokeStyle = '#00e5ff'; decayCtx.moveTo(startX, 0); decayCtx.lineTo(startX, height); decayCtx.stroke(); }
-    if(endX >= 0 && endX <= width) { decayCtx.beginPath(); decayCtx.strokeStyle = '#ff1744'; decayCtx.moveTo(endX, 0); decayCtx.lineTo(endX, height); decayCtx.stroke(); }
+    // 画面のフチ（内側）に線を留める
+    const drawStartX = Math.max(0, Math.min(width, startX));
+    const drawEndX = Math.max(0, Math.min(width, endX));
     
-    const fillStartX = Math.max(0, Math.min(width, startX));
-    const fillEndX = Math.max(0, Math.min(width, endX));
+    decayCtx.beginPath(); decayCtx.strokeStyle = '#00e5ff'; decayCtx.moveTo(drawStartX, 0); decayCtx.lineTo(drawStartX, height); decayCtx.stroke();
+    decayCtx.beginPath(); decayCtx.strokeStyle = '#ff1744'; decayCtx.moveTo(drawEndX, 0); decayCtx.lineTo(drawEndX, height); decayCtx.stroke();
+    
+    const fillStartX = Math.min(drawStartX, drawEndX);
+    const fillEndX = Math.max(drawStartX, drawEndX);
     if(fillStartX !== fillEndX) {
       decayCtx.fillStyle = 'rgba(255, 255, 255, 0.1)';
-      decayCtx.fillRect(Math.min(fillStartX, fillEndX), 0, Math.abs(fillEndX - fillStartX), height);
+      decayCtx.fillRect(fillStartX, 0, fillEndX - fillStartX, height);
     }
   }
 
   function getMouseX(e) { return (e.touches ? e.touches[0].clientX : e.clientX) - document.getElementById('decayCanvas').getBoundingClientRect().left; }
   
+  // ★ 修正箇所: HIT_TOLERANCEを完全に削除し、無条件で近い方の線を掴む
   function handleDown(e) {
     if (!currentSchroederDB) return;
     const x = getMouseX(e);
@@ -487,17 +486,17 @@
     const startX = ((currentCursorStartIdx - viewStartIdx) / viewSamples) * width;
     const endX = ((currentCursorEndIdx - viewStartIdx) / viewSamples) * width;
     
-    const distStart = Math.abs(x - startX);
-    const distEnd = Math.abs(x - endX);
+    // 描画されている場所（画面内）で距離を測る
+    const drawStartX = Math.max(0, Math.min(width, startX));
+    const drawEndX = Math.max(0, Math.min(width, endX));
     
-    const HIT_TOLERANCE = 40; 
-
-    if (distStart < HIT_TOLERANCE && distStart <= distEnd) {
+    const distStart = Math.abs(x - drawStartX);
+    const distEnd = Math.abs(x - drawEndX);
+    
+    if (distStart <= distEnd) {
       draggingCursor = 'start';
-    } else if (distEnd < HIT_TOLERANCE) {
-      draggingCursor = 'end';
     } else {
-      draggingCursor = null; 
+      draggingCursor = 'end';
     }
   }
 
