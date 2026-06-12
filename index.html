@@ -32,6 +32,7 @@
     .meter-container { width: 100%; height: 15px; background-color: #eee; border-radius: 5px; overflow: hidden; margin-bottom: 5px; }
     #meter-bar { width: 0%; height: 100%; background-color: #5cb85c; transition: width 0.05s ease-out; }
     
+    /* スマホでのスクロール干渉を防ぐ touch-action: none */
     canvas { width: 100%; height: 180px; background-color: #222; border-radius: 5px; margin-top: 5px; display: block; cursor: crosshair; touch-action: none; }
     .canvas-header { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 15px; margin-bottom: 2px;}
     .canvas-label { font-size: 0.85rem; color: #444; font-weight: bold;}
@@ -184,8 +185,7 @@
       updateBandSelectUI(); initAnalysisData(); updateDetailsTable();
       decayCtx.clearRect(0, 0, decayCtx.canvas.width, decayCtx.canvas.height);
       if (currentRawBuffer) {
-        statusDisplay.textContent = "モード切替による再解析中..."; 
-        statusDisplay.style.color = "#f0ad4e";
+        statusDisplay.textContent = "モード切替による再解析中..."; statusDisplay.style.color = "#f0ad4e";
         setTimeout(processAllBands, 50);
       }
     });
@@ -343,7 +343,6 @@
   }
 
   async function processAllBands() {
-    // 測定のたびに必ずすべてのデータをリセットし、過去のインデックスを引き継がない
     initAnalysisData(); 
     document.getElementById('manualResult').textContent = "- s";
     document.getElementById('manual-level').textContent = "区間: - dB 〜 - dB";
@@ -368,7 +367,6 @@
       d.rt20 = getRTAuto(schroederDB, peakIndex, -5, -25);
       d.rt30 = getRTAuto(schroederDB, peakIndex, -5, -35);
       
-      // 今回の新しい波形に対して、正確な -5dB と -25dB の絶対インデックスを取り直す
       d.cursorStartIdx = getDbIndex(schroederDB, peakIndex, -5);
       d.cursorEndIdx = getDbIndex(schroederDB, peakIndex, -25);
       d.manualRt = calcRTForIndices(schroederDB, peakIndex, d.cursorStartIdx, d.cursorEndIdx);
@@ -407,7 +405,7 @@
     currentSchroederDB = data.schroederDB; currentPeakIndex = data.peakIndex;
     currentCursorStartIdx = data.cursorStartIdx; currentCursorEndIdx = data.cursorEndIdx;
     
-    // オートズーム：赤い線が必ず画面の70%の位置に来るように正確に逆算する
+    // オートズーム：赤線（-25dB）が画面の「70%」の位置になるように倍率を逆算
     const viewStartIdx = Math.max(0, currentPeakIndex - Math.floor(sampleRate * 0.02));
     const totalViewable = currentSchroederDB.length - viewStartIdx;
     const targetDistance = Math.max(1, currentCursorEndIdx - viewStartIdx);
@@ -465,7 +463,7 @@
     }
   }
 
-  // 余計な処理を取り除き、タップ位置に最も近い線を素直に掴むロジック
+  // ★ スマホ最適化：固定値を廃止し、常に「一番近い線」を確実に掴む
   function getMouseX(e) { return (e.touches ? e.touches[0].clientX : e.clientX) - document.getElementById('decayCanvas').getBoundingClientRect().left; }
   
   function handleDown(e) {
@@ -482,14 +480,11 @@
     const distStart = Math.abs(x - startX);
     const distEnd = Math.abs(x - endX);
     
-    const HIT_TOLERANCE = 40; 
-
-    if (distStart < HIT_TOLERANCE && distStart <= distEnd) {
+    // 無条件で近い方を掴む
+    if (distStart <= distEnd) {
       draggingCursor = 'start';
-    } else if (distEnd < HIT_TOLERANCE) {
-      draggingCursor = 'end';
     } else {
-      draggingCursor = null; 
+      draggingCursor = 'end';
     }
   }
 
@@ -503,14 +498,25 @@
     let targetIdx = Math.floor(viewStartIdx + (x / decayCtx.canvas.width) * viewSamples);
     targetIdx = Math.max(0, Math.min(targetIdx, currentSchroederDB.length - 1));
 
-    if (draggingCursor === 'start') currentCursorStartIdx = targetIdx;
-    else currentCursorEndIdx = targetIdx;
+    // ★ すり抜け（交差）の絶対防止ブロック
+    if (draggingCursor === 'start') {
+      currentCursorStartIdx = Math.min(targetIdx, currentCursorEndIdx - 10);
+    } else {
+      currentCursorEndIdx = Math.max(targetIdx, currentCursorStartIdx + 10);
+    }
     
     drawDecayCurve(); updateManualRTDisplay();
   }
 
-  document.getElementById('decayCanvas').addEventListener('mousedown', handleDown); document.getElementById('decayCanvas').addEventListener('mousemove', handleMove); window.addEventListener('mouseup', () => draggingCursor = null);
-  document.getElementById('decayCanvas').addEventListener('touchstart', handleDown, {passive: false}); document.getElementById('decayCanvas').addEventListener('touchmove', handleMove, {passive: false}); window.addEventListener('touchend', () => draggingCursor = null);
+  // iOSのスクロール干渉を確実にブロックするために touchstart に preventDefault を付与
+  const canvasEl = document.getElementById('decayCanvas');
+  canvasEl.addEventListener('mousedown', handleDown);
+  canvasEl.addEventListener('mousemove', handleMove);
+  window.addEventListener('mouseup', () => draggingCursor = null);
+  
+  canvasEl.addEventListener('touchstart', (e) => { e.preventDefault(); handleDown(e); }, {passive: false});
+  canvasEl.addEventListener('touchmove', handleMove, {passive: false});
+  window.addEventListener('touchend', () => draggingCursor = null);
 
   function updateManualRTDisplay() {
     if(!currentSchroederDB) return;
