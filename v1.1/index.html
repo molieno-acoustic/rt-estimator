@@ -1,0 +1,917 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RT Estimator for NOE</title>
+  <style>
+    body { font-family: sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; color: #333; }
+    .container { max-width: 650px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); position: relative; }
+    h1 { font-size: 1.2rem; text-align: center; margin-bottom: 15px; }
+    .version { position: absolute; top: 15px; right: 20px; font-size: 0.75rem; color: #999; }
+    
+    .tabs { display: flex; border-bottom: 2px solid #ddd; margin-bottom: 15px; overflow-x: auto; white-space: nowrap; }
+    .tab-btn { flex: 1; padding: 8px 5px; text-align: center; cursor: pointer; background: #f8f9fa; border: none; font-weight: bold; color: #666; transition: 0.2s; font-size: 0.85rem; min-width: 80px;}
+    .tab-btn.active { background: #007BFF; color: white; border-radius: 5px 5px 0 0; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    .control-group { margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; background: #fdfdfd; padding: 5px 10px; border: 1px solid #eee; border-radius: 5px;}
+    .control-group label { font-size: 0.85rem; font-weight: bold;}
+    
+    /* ★修正箇所: selectの固定幅(90px)を解除し、中身に合わせて可変にしました */
+    input[type="number"] { width: 90px; padding: 5px; font-size: 0.9rem; }
+    select { width: auto; max-width: 65%; padding: 5px; font-size: 0.9rem; }
+    
+    .radio-group { display: flex; gap: 15px; font-size: 0.9rem; font-weight: bold;}
+    .radio-group label { cursor: pointer; }
+
+    .main-btn { width: 100%; padding: 15px; font-size: 1.1rem; background-color: #007BFF; color: white; border: none; border-radius: 5px; cursor: pointer; margin-bottom: 10px; font-weight: bold;}
+    .main-btn:disabled { background-color: #ccc; }
+    .btn-success { background-color: #28a745; margin-top: 15px;}
+    .btn-success:hover { background-color: #218838; }
+
+    #status { text-align: center; font-size: 1.1rem; font-weight: bold; margin: 5px 0 15px 0; color: #d9534f; }
+    
+    .meter-container { width: 100%; height: 15px; background-color: #eee; border-radius: 5px; overflow: hidden; margin-bottom: 5px; }
+    #meter-bar { width: 0%; height: 100%; background-color: #5cb85c; transition: width 0.05s ease-out; }
+    
+    canvas { width: 100%; height: 180px; background-color: #222; border-radius: 5px; margin-top: 5px; display: block; cursor: crosshair; touch-action: none; }
+    .canvas-header { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 15px; margin-bottom: 2px;}
+    .canvas-label { font-size: 0.85rem; color: #444; font-weight: bold;}
+    
+    #results { display: flex; justify-content: space-between; margin-top: 15px; background: #e9ecef; padding: 10px; border-radius: 5px; }
+    .result-box { text-align: center; width: 30%; }
+    .result-title { font-size: 0.8rem; color: #555; }
+    .result-value { font-size: 1.1rem; font-weight: bold; color: #007BFF; margin-top: 5px; }
+    
+    .manual-panel { margin-top: 15px; background: #e0f7fa; padding: 15px; border-radius: 5px; text-align: center; border: 1px solid #b2ebf2; position: relative;}
+    .manual-result { font-size: 1.8rem; font-weight: bold; color: #00838f; margin: 5px 0;}
+    .manual-level { font-size: 0.85rem; color: #00695c; font-weight: bold; background: #fff; padding: 3px 10px; border-radius: 15px;}
+    .set-btn { position: absolute; right: 15px; top: 50%; transform: translateY(-50%); background: #00838f; color: white; border: none; padding: 10px 15px; border-radius: 5px; cursor: pointer; font-weight: bold;}
+    .set-btn:hover { background: #006064; }
+
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.85rem; text-align: center; }
+    th { background: #007BFF; color: white; padding: 6px; border: 1px solid #ddd; }
+    td { padding: 6px; border: 1px solid #ddd; background: #fff; }
+    .highlight-cell { font-weight: bold; color: #00838f; background: #e0f7fa; }
+
+    .manual-content { font-size: 0.9rem; line-height: 1.6; color: #444; padding: 10px; }
+    .manual-content h2 { font-size: 1.2rem; color: #007BFF; border-bottom: 2px solid #007BFF; padding-bottom: 5px; margin-top: 0; }
+    .manual-content h3 { font-size: 1.05rem; color: #333; margin-top: 25px; margin-bottom: 10px; border-left: 4px solid #007BFF; padding-left: 8px;}
+    .manual-content h4 { font-size: 0.95rem; color: #555; margin-top: 15px; margin-bottom: 5px; }
+    .manual-content ul { padding-left: 20px; margin-top: 5px; }
+    .manual-content li { margin-bottom: 5px; }
+    .manual-content strong { color: #d9534f; }
+    .manual-content .highlight-box { background: #f8d7da; padding: 10px; border-radius: 5px; margin: 15px 0; border: 1px solid #f5c6cb; }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <div class="version">v1.1.4</div>
+  <h1>RT Estimator for NOE</h1>
+
+  <div class="tabs">
+    <button class="tab-btn active" onclick="switchTab('measure')">測定・RTグラフ</button>
+    <button class="tab-btn" onclick="switchTab('rdf')">残響減衰変動</button>
+    <button class="tab-btn" onclick="switchTab('details')">詳細分析結果</button>
+    <button class="tab-btn" onclick="switchTab('manual')">マニュアル</button>
+  </div>
+
+  <div id="view-measure" class="tab-content active">
+    <div class="control-group">
+      <label for="delayInput">開始ディレイ (秒): </label>
+      <input type="number" id="delayInput" value="3" min="0" max="10">
+    </div>
+    <div class="control-group">
+      <label for="triggerInput">トリガー (dBFS): </label>
+      <input type="number" id="triggerInput" value="-15" max="0" min="-60">
+    </div>
+    <div class="control-group">
+      <label for="recordTimeInput">録音時間 (秒): </label>
+      <input type="number" id="recordTimeInput" value="1.0" step="0.5" min="0.5" max="5">
+    </div>
+
+    <button id="startBtn" class="main-btn">測定準備（マイクを許可）</button>
+    <div id="status">待機中...</div>
+    <div class="meter-container"><div id="meter-bar"></div></div>
+
+    <div class="control-group" style="margin-top:15px; background: #fff3e0; border-color: #ffe0b2;">
+      <div>
+        <label style="color: #e65100; display: block; margin-bottom: 5px;">分析モード切替:</label>
+        <div class="radio-group">
+          <label><input type="radio" name="octaveMode" value="1/1" checked> 1/1 Octave</label>
+          <label><input type="radio" name="octaveMode" value="1/3"> 1/3 Octave</label>
+        </div>
+      </div>
+      <div>
+        <label for="bandSelect" style="color: #e65100; display:block; margin-bottom:2px;">表示帯域:</label>
+        <select id="bandSelect"></select>
+      </div>
+    </div>
+
+    <div id="results">
+      <div class="result-box"><div class="result-title">自動 RT10</div><div class="result-value" id="rt10">-</div></div>
+      <div class="result-box"><div class="result-title">自動 RT20</div><div class="result-value" id="rt20">-</div></div>
+      <div class="result-box"><div class="result-title">自動 RT30</div><div class="result-value" id="rt30">-</div></div>
+    </div>
+
+    <div class="manual-panel" id="manual-panel">
+      <div style="font-size: 0.9rem; color: #006064; font-weight: bold;">マニュアル分析 (ドラッグで区間選択)</div>
+      <div class="manual-result" id="manualResult">- s</div>
+      <div class="manual-level" id="manual-level">区間: - dB 〜 - dB</div>
+      <button class="set-btn" id="setBtn">結果を<br>セット</button>
+    </div>
+
+    <div class="canvas-header">
+      <div class="canvas-label">シュレーダー減衰曲線 (+5dB〜-65dB)</div>
+      <div style="font-size: 0.8rem;">横軸拡大: <input type="range" id="zoomSlider" min="1" max="30" step="0.1" value="1" style="width:70px; vertical-align:middle;"></div>
+    </div>
+    <canvas id="decayCanvas" width="600" height="180"></canvas>
+  </div>
+
+  <div id="view-rdf" class="tab-content">
+    <div class="control-group" style="background: #e8f5e9; border-color: #c3e6cb;">
+      <div>
+        <label for="rdfTimeConst">時定数 (ms):</label>
+        <input type="number" id="rdfTimeConst" value="1.0" step="0.1" min="0.1" max="100">
+      </div>
+      <div>
+        <label for="rdfBandSelect">帯域:</label>
+        <select id="rdfBandSelect">
+          <option value="AP" selected>AP (All Pass)</option>
+          <option value="Low">Low (〜315 Hz)</option>
+          <option value="Mid">Mid (315〜2520 Hz)</option>
+          <option value="High">High (2520 Hz〜)</option>
+        </select>
+      </div>
+    </div>
+    <div class="control-group" style="background: #e8f5e9; border-color: #c3e6cb;">
+      <label style="cursor: pointer;"><input type="checkbox" id="rdfAWeight" checked> A特性補正を適用する</label>
+    </div>
+
+    <div class="manual-panel" style="background: #fff3e0; border-color: #ffe0b2;">
+      <div style="font-size: 0.9rem; color: #e65100; font-weight: bold;">マニュアル分析 (ドラッグで区間選択)</div>
+      <div class="manual-result" id="rdfResultRms" style="color: #e65100;">- dB</div>
+      <div class="manual-level" id="rdfLevelInfo" style="background: #fff; color: #e65100; border: 1px solid #ffe0b2;">区間: - dB 〜 - dB</div>
+      <button class="set-btn" id="rdfSetBtn" style="background: #e65100;">結果を<br>セット</button>
+    </div>
+
+    <div class="canvas-header">
+      <div class="canvas-label">レベル波形と近似直線 (+5dB〜-65dB)</div>
+      <div style="font-size: 0.8rem;">横軸拡大: <input type="range" id="rdfZoomSlider" min="1" max="30" step="0.1" value="1" style="width:70px; vertical-align:middle;"></div>
+    </div>
+    <canvas id="rdfCanvas" width="600" height="180"></canvas>
+  </div>
+
+  <div id="view-details" class="tab-content">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+        <h2 style="font-size: 1.1rem; margin: 0;">詳細分析結果</h2>
+        <select id="detailsModeSelect" style="padding: 5px; font-weight: bold; border-radius: 5px; border: 1px solid #007BFF; color: #007BFF; width: auto; max-width: 60%;">
+            <option value="rt">残響時間 (RT60)</option>
+            <option value="rdf">残響減衰変動</option>
+        </select>
+    </div>
+    <table id="detailsTable">
+      <thead>
+        </thead>
+      <tbody></tbody>
+    </table>
+    <button id="csvBtn" class="main-btn btn-success" style="margin-top: 20px;">📊 表示中のデータをCSV保存</button>
+  </div>
+
+  <div id="view-manual" class="tab-content">
+    <div class="manual-content">
+      <h2>RT Estimator for NOE — 取扱マニュアル</h2>
+      <h3>1. 概要</h3>
+      <p>本アプリはインパルス音源を用いて、室内音響の残響時間（RT60）および「残響減衰変動」を簡易かつ高度に測定・分析するツールです。</p>
+      <h3>2. 残響減衰変動 について</h3>
+      <p>フラッターエコーや低音の定在波による「音場の凸凹具合」を数値化する指標です。</p>
+      <ul>
+        <li>「残響減衰変動」タブを開き、帯域（AP, Low, Mid, High）を選択します。</li>
+        <li>グラフ上の青・赤カーソルで直線的な減衰区間を指定します。</li>
+        <li>その区間における一次回帰直線との<b>RMS偏差（dB）</b>が表示されます。この値が小さいほど、音響障害の少ないクリアな響きの空間と評価できます。</li>
+        <li>「結果をセット」で、他帯域にも同じ時間区間を一括適用できます。</li>
+      </ul>
+      <h3>3. 詳細分析結果とCSV保存</h3>
+      <ul>
+        <li>「詳細分析結果」タブ右上のコンボボックスから、RT60の一覧と残響減衰変動の一覧を自由に切り替えて確認できます。</li>
+        <li>下部の「CSV保存」ボタンを押すと、現在表示されている方の一覧データがファイル出力されます。</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<script>
+  let audioContext; let microphone; let processor; let streamGlobal = null;
+  let isRecording = false; let isWaitingTrigger = false;
+  let sampleRate = 44100; let currentRawBuffer = null;
+  const PRE_BUFFER_SEC = 0.1;
+  
+  const BANDS_1_1 = ['overall', '125', '250', '500', '1000', '2000', '4000', '8000', '16000'];
+  const BANDS_1_3 = ['overall', '100', '125', '160', '200', '250', '315', '400', '500', '630', '800', '1000', '1250', '1600', '2000', '2500', '3150', '4000', '5000', '6300', '8000', '10000', '12500', '16000'];
+  const RDF_BANDS = ['AP', 'Low', 'Mid', 'High'];
+  
+  let currentOctaveMode = '1/1';
+  let currentBands = BANDS_1_1;
+  let analysisData = {};
+  let rdfAnalysisData = {};
+  
+  let askApplyAll = true;
+  let askRdfApplyAll = true;
+
+  // --- HTML Elements ---
+  const decayCtx = document.getElementById('decayCanvas').getContext('2d');
+  const zoomSlider = document.getElementById('zoomSlider');
+  const bandSelect = document.getElementById('bandSelect');
+  const statusDisplay = document.getElementById('status');
+  const startBtn = document.getElementById('startBtn');
+  const csvBtn = document.getElementById('csvBtn');
+  const detailsModeSelect = document.getElementById('detailsModeSelect');
+
+  const rdfCtx = document.getElementById('rdfCanvas').getContext('2d');
+  const rdfZoomSlider = document.getElementById('rdfZoomSlider');
+  const rdfTimeConstInput = document.getElementById('rdfTimeConst');
+  const rdfBandSelect = document.getElementById('rdfBandSelect');
+  const rdfAWeightCheckbox = document.getElementById('rdfAWeight');
+
+  let currentSchroederDB, currentPeakIndex, currentCursorStartIdx, currentCursorEndIdx, draggingCursor = null;
+  let rdfDataRef = null;
+  let rdfDraggingCursor = null;
+
+  function switchTab(tabId) {
+    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+    document.getElementById('view-' + tabId).classList.add('active');
+    event.currentTarget.classList.add('active');
+  }
+
+  function initAnalysisData() {
+    analysisData = {};
+    currentBands.forEach(b => {
+      analysisData[b] = {
+        rt10: '-', rt20: '-', rt30: '-', manualRt: '-', manualLevelStr: '-',
+        cursorStartIdx: -1, cursorEndIdx: -1, schroederDB: null, peakIndex: 0
+      };
+    });
+    
+    rdfAnalysisData = {};
+    RDF_BANDS.forEach(b => {
+      rdfAnalysisData[b] = {
+        dbArray: null, peakIndex: 0, startIdx: -1, endIdx: -1, rms: '-', a: 0, b: 0, levelStr: '-'
+      };
+    });
+  }
+  
+  function updateBandSelectUI() {
+    bandSelect.innerHTML = '';
+    currentBands.forEach(b => {
+      const option = document.createElement('option');
+      option.value = b;
+      option.textContent = b === 'overall' ? '全体 (Overall)' : (b >= 1000 ? (b/1000) + ' kHz' : b + ' Hz');
+      if (b === '500') option.selected = true;
+      bandSelect.appendChild(option);
+    });
+  }
+
+  document.querySelectorAll('input[name="octaveMode"]').forEach(radio => {
+    radio.addEventListener('change', (e) => {
+      currentOctaveMode = e.target.value;
+      currentBands = currentOctaveMode === '1/1' ? BANDS_1_1 : BANDS_1_3;
+      updateBandSelectUI(); initAnalysisData(); updateDetailsTable();
+      decayCtx.clearRect(0, 0, decayCtx.canvas.width, decayCtx.canvas.height);
+      rdfCtx.clearRect(0, 0, rdfCtx.canvas.width, rdfCtx.canvas.height);
+      if (currentRawBuffer) {
+        statusDisplay.textContent = "モード切替による再解析中..."; statusDisplay.style.color = "#f0ad4e";
+        setTimeout(processAllBands, 50);
+      }
+    });
+  });
+
+  updateBandSelectUI(); initAnalysisData();
+
+  function getDbIndex(dbArray, peakIdx, targetDb) {
+    for(let i = peakIdx; i < dbArray.length; i++) {
+      if(dbArray[i] <= targetDb) return i;
+    }
+    return dbArray.length - 1;
+  }
+
+  function getRTAuto(dbArray, startIndex, startDb, endDb) {
+    let x = [], y = [];
+    for(let i = startIndex; i < dbArray.length; i++) {
+      if(dbArray[i] <= startDb && dbArray[i] >= endDb) { x.push((i - startIndex) / sampleRate); y.push(dbArray[i]); }
+    }
+    if (x.length < 10) return "N/A";
+    let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0, n = x.length;
+    for (let i = 0; i < n; i++) { sumX += x[i]; sumY += y[i]; sumXY += x[i] * y[i]; sumXX += x[i] * x[i]; }
+    const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+    return slope >= 0 ? "エラー" : (-60 / slope).toFixed(2) + "s";
+  }
+
+  function calcRTForIndices(dbArray, peakIdx, idx1, idx2) {
+    const startIdx = Math.min(idx1, idx2); const endIdx = Math.max(idx1, idx2);
+    if(endIdx - startIdx < 10) return "計算不可";
+    let x = [], y = [];
+    for(let i = startIdx; i <= endIdx; i++) { x.push((i - peakIdx) / sampleRate); y.push(dbArray[i]); }
+    let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0, n = x.length;
+    for (let i = 0; i < n; i++) { sumX += x[i]; sumY += y[i]; sumXY += x[i] * y[i]; sumXX += x[i] * x[i]; }
+    const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+    return slope >= 0 ? "計算不可" : (-60 / slope).toFixed(2) + "s";
+  }
+
+  // --- RT一括セット ---
+  document.getElementById('setBtn').addEventListener('click', () => {
+    if(!currentRawBuffer) return;
+    const b = bandSelect.value;
+    analysisData[b].cursorStartIdx = currentCursorStartIdx;
+    analysisData[b].cursorEndIdx = currentCursorEndIdx;
+    analysisData[b].manualRt = document.getElementById('manualResult').textContent;
+    const sourceLevelStr = document.getElementById('manual-level').textContent.replace('区間: ', '');
+    analysisData[b].manualLevelStr = sourceLevelStr;
+    const offsetStart = currentCursorStartIdx - currentPeakIndex;
+    const offsetEnd = currentCursorEndIdx - currentPeakIndex;
+
+    if (askApplyAll || b === 'overall') {
+      const startDb = currentSchroederDB[currentCursorStartIdx];
+      const endDb = currentSchroederDB[currentCursorEndIdx];
+      const ans = confirm(`設定した区間（${startDb.toFixed(1)} 〜 ${endDb.toFixed(1)} dB）と同じ時間区間を、他のすべての帯域にも適用しますか？`);
+      if (ans) {
+        currentBands.forEach(band => {
+          if (band === b) return;
+          let d = analysisData[band];
+          d.cursorStartIdx = Math.max(0, Math.min(d.schroederDB.length - 1, d.peakIndex + offsetStart));
+          d.cursorEndIdx = Math.max(0, Math.min(d.schroederDB.length - 1, d.peakIndex + offsetEnd));
+          d.manualRt = calcRTForIndices(d.schroederDB, d.peakIndex, d.cursorStartIdx, d.cursorEndIdx);
+          d.manualLevelStr = "-"; 
+        });
+      } else { if (b !== 'overall') askApplyAll = false; }
+    }
+    updateDetailsTable();
+    statusDisplay.textContent = `${b === 'overall' ? '全体' : b} の手動結果をセットしました`;
+  });
+
+  // --- 残響減衰変動 一括セット ---
+  document.getElementById('rdfSetBtn').addEventListener('click', () => {
+    if(!currentRawBuffer) return;
+    const b = rdfBandSelect.value;
+    const sourceLevelStr = rdfDataRef.levelStr;
+    const offsetStart = rdfDataRef.startIdx - rdfDataRef.peakIndex;
+    const offsetEnd = rdfDataRef.endIdx - rdfDataRef.peakIndex;
+
+    if (askRdfApplyAll || b === 'AP') {
+      const startDb = rdfDataRef.dbArray[rdfDataRef.startIdx];
+      const endDb = rdfDataRef.dbArray[rdfDataRef.endIdx];
+      const ans = confirm(`設定した区間（${startDb.toFixed(1)} 〜 ${endDb.toFixed(1)} dB）と同じ時間区間を、他のすべての帯域にも適用しますか？`);
+      if (ans) {
+        RDF_BANDS.forEach(band => {
+          if (band === b) return;
+          let d = rdfAnalysisData[band];
+          d.startIdx = Math.max(0, Math.min(d.dbArray.length - 1, d.peakIndex + offsetStart));
+          d.endIdx = Math.max(0, Math.min(d.dbArray.length - 1, d.peakIndex + offsetEnd));
+          calcRdfForBand(band);
+          d.levelStr = "-"; 
+        });
+      } else { if (b !== 'AP') askRdfApplyAll = false; }
+    }
+    updateDetailsTable();
+    statusDisplay.textContent = `${b} 帯域の手動結果をセットしました`;
+  });
+
+  bandSelect.addEventListener('change', () => {
+    if(analysisData[bandSelect.value] && analysisData[bandSelect.value].schroederDB) loadBandData(bandSelect.value);
+  });
+  zoomSlider.addEventListener('input', () => { drawDecayCurve(); updateManualRTDisplay(); });
+
+  // --- Measurement & Processing ---
+  startBtn.addEventListener('click', async () => {
+    startBtn.disabled = true;
+    try {
+      const constraints = {
+        audio: { 
+          echoCancellation: false, noiseSuppression: false, autoGainControl: false,
+          googEchoCancellation: false, googAutoGainControl: false, googNoiseSuppression: false, googHighpassFilter: false
+        } 
+      };
+      if(!streamGlobal) streamGlobal = await navigator.mediaDevices.getUserMedia(constraints);
+      let delay = parseInt(document.getElementById('delayInput').value, 10) || 0;
+      if (delay > 0) {
+        statusDisplay.textContent = `設置してください（残り ${delay} 秒）...`; statusDisplay.style.color = "#f0ad4e";
+        const interval = setInterval(() => { 
+          delay--; 
+          if (delay > 0) statusDisplay.textContent = `設置してください（残り ${delay} 秒）...`; 
+          else { clearInterval(interval); startMonitoring(); } 
+        }, 1000);
+      } else startMonitoring();
+    } catch(err) {
+      statusDisplay.textContent = "マイク許可エラー"; startBtn.disabled = false; console.error(err);
+    }
+  });
+
+  function startMonitoring() {
+    if(!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    sampleRate = audioContext.sampleRate;
+    askApplyAll = true; askRdfApplyAll = true;
+
+    if(processor) { processor.disconnect(); microphone.disconnect(); }
+    processor = audioContext.createScriptProcessor(4096, 1, 1);
+    microphone = audioContext.createMediaStreamSource(streamGlobal);
+    microphone.connect(processor); processor.connect(audioContext.destination);
+
+    const triggerDbfs = parseFloat(document.getElementById('triggerInput').value);
+    const targetTotalSamples = parseFloat(document.getElementById('recordTimeInput').value) * sampleRate;
+    const maxPreBufferChunks = Math.ceil((PRE_BUFFER_SEC * sampleRate) / 4096);
+
+    let recordedChunks = []; let preBufferChunks = []; let currentRecordedSamples = 0;
+    isWaitingTrigger = true; isRecording = false; currentRawBuffer = null;
+    statusDisplay.textContent = "手拍子待ち（マイク監視中）..."; statusDisplay.style.color = "#5cb85c";
+
+    processor.onaudioprocess = function(e) {
+      if (!isWaitingTrigger && !isRecording) return;
+      const dataCopy = new Float32Array(e.inputBuffer.getChannelData(0));
+      let maxPeak = 0;
+      for (let i = 0; i < dataCopy.length; i++) if (Math.abs(dataCopy[i]) > maxPeak) maxPeak = Math.abs(dataCopy[i]);
+      const dbfs = maxPeak > 0 ? 20 * Math.log10(maxPeak) : -Infinity;
+      document.getElementById('meter-bar').style.width = Math.max(0, Math.min(100, ((dbfs + 60) / 60) * 100)) + "%";
+
+      if (isWaitingTrigger) {
+        if (dbfs > triggerDbfs) {
+          isWaitingTrigger = false; isRecording = true;
+          statusDisplay.textContent = "録音中..."; statusDisplay.style.color = "#d9534f";
+          recordedChunks.push(...preBufferChunks, dataCopy);
+          currentRecordedSamples += (preBufferChunks.length * 4096) + dataCopy.length;
+        } else {
+          preBufferChunks.push(dataCopy);
+          if (preBufferChunks.length > maxPreBufferChunks) preBufferChunks.shift();
+        }
+      } else if (isRecording) {
+        recordedChunks.push(dataCopy); currentRecordedSamples += dataCopy.length;
+        if (currentRecordedSamples >= targetTotalSamples) {
+          isRecording = false; processor.disconnect(); microphone.disconnect();
+          statusDisplay.textContent = "一括解析中..."; statusDisplay.style.color = "#f0ad4e";
+          startBtn.disabled = false; startBtn.textContent = "もう一度測定する";
+          currentRawBuffer = new Float32Array(currentRecordedSamples);
+          let offset = 0;
+          for (let i = 0; i < recordedChunks.length; i++) { currentRawBuffer.set(recordedChunks[i], offset); offset += recordedChunks[i].length; }
+          processAllBands();
+        }
+      }
+    };
+  }
+
+  async function filterBuffer(rawBuffer, freq) {
+    if (freq === 'overall') return rawBuffer;
+    const offlineCtx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1, rawBuffer.length, sampleRate);
+    const audioBuf = offlineCtx.createBuffer(1, rawBuffer.length, sampleRate);
+    audioBuf.copyToChannel(rawBuffer, 0);
+    const source = offlineCtx.createBufferSource(); source.buffer = audioBuf;
+    const filter = offlineCtx.createBiquadFilter();
+    filter.type = 'bandpass'; filter.frequency.value = parseFloat(freq); filter.Q.value = currentOctaveMode === '1/1' ? 1.414 : 4.318; 
+    source.connect(filter); filter.connect(offlineCtx.destination); source.start();
+    const rendered = await offlineCtx.startRendering();
+    return rendered.getChannelData(0);
+  }
+
+  async function processAllBands() {
+    initAnalysisData(); 
+    document.getElementById('manualResult').textContent = "- s";
+    document.getElementById('manual-level').textContent = "区間: - dB 〜 - dB";
+
+    for (const b of currentBands) {
+      const buffer = await filterBuffer(currentRawBuffer, b);
+      let maxSquare = 0; let peakIndex = 0;
+      for(let i=0; i<buffer.length; i++) {
+        let sq = buffer[i] * buffer[i];
+        if(sq > maxSquare) { maxSquare = sq; peakIndex = i; }
+      }
+      const schroederDB = new Float32Array(buffer.length).fill(-120);
+      let sum = 0;
+      for(let i = buffer.length - 1; i >= peakIndex; i--) { sum += buffer[i] * buffer[i]; schroederDB[i] = sum; }
+      const maxEnergy = schroederDB[peakIndex];
+      for(let i = peakIndex; i < buffer.length; i++) schroederDB[i] = maxEnergy > 0 ? 10 * Math.log10(schroederDB[i] / maxEnergy) : -120;
+      for(let i = 0; i < peakIndex; i++) schroederDB[i] = 0;
+
+      let d = analysisData[b];
+      d.schroederDB = schroederDB; d.peakIndex = peakIndex;
+      
+      d.rt10 = getRTAuto(schroederDB, peakIndex, -5, -15);
+      d.rt20 = getRTAuto(schroederDB, peakIndex, -5, -25);
+      d.rt30 = getRTAuto(schroederDB, peakIndex, -5, -35);
+      
+      d.cursorStartIdx = getDbIndex(schroederDB, peakIndex, -5);
+      d.cursorEndIdx = getDbIndex(schroederDB, peakIndex, -25);
+      d.manualRt = calcRTForIndices(schroederDB, peakIndex, d.cursorStartIdx, d.cursorEndIdx);
+      d.manualLevelStr = `${schroederDB[d.cursorStartIdx].toFixed(1)} 〜 ${schroederDB[d.cursorEndIdx].toFixed(1)} dB`;
+    }
+    
+    // 裏側で残響減衰変動も一括処理
+    await processAllRdfBands();
+
+    loadBandData(bandSelect.value);
+    loadRdfBandData(rdfBandSelect.value);
+    updateDetailsTable();
+    
+    statusDisplay.textContent = "解析完了"; statusDisplay.style.color = "#007BFF";
+  }
+
+  // --- 残響減衰変動 Processing ---
+  function applyAWeighting(ctx, sourceNode) {
+    const f1 = ctx.createBiquadFilter(); f1.type = 'highpass'; f1.frequency.value = 27.4; f1.Q.value = 0.5;
+    const f2 = ctx.createBiquadFilter(); f2.type = 'highpass'; f2.frequency.value = 27.4; f2.Q.value = 0.5;
+    const f3 = ctx.createBiquadFilter(); f3.type = 'highpass'; f3.frequency.value = 206; f3.Q.value = 0.5;
+    const f4 = ctx.createBiquadFilter(); f4.type = 'lowpass'; f4.frequency.value = 12200; f4.Q.value = 0.5;
+    const f5 = ctx.createBiquadFilter(); f5.type = 'lowpass'; f5.frequency.value = 12200; f5.Q.value = 0.5;
+    sourceNode.connect(f1); f1.connect(f2); f2.connect(f3); f3.connect(f4); f4.connect(f5);
+    return f5;
+  }
+
+  async function processAllRdfBands() {
+    if(!currentRawBuffer) return;
+    const tcMs = parseFloat(rdfTimeConstInput.value) || 1.0;
+    const aWeight = rdfAWeightCheckbox.checked;
+
+    for (const b of RDF_BANDS) {
+      const offlineCtx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1, currentRawBuffer.length, sampleRate);
+      const source = offlineCtx.createBufferSource();
+      const audioBuf = offlineCtx.createBuffer(1, currentRawBuffer.length, sampleRate);
+      audioBuf.copyToChannel(currentRawBuffer, 0);
+      source.buffer = audioBuf;
+
+      let currentNode = source;
+      if (b === 'Low') {
+        const lpf = offlineCtx.createBiquadFilter(); lpf.type = 'lowpass'; lpf.frequency.value = 315; lpf.Q.value = 0.707;
+        currentNode.connect(lpf); currentNode = lpf;
+      } else if (b === 'Mid') {
+        const hpf = offlineCtx.createBiquadFilter(); hpf.type = 'highpass'; hpf.frequency.value = 315; hpf.Q.value = 0.707;
+        const lpf = offlineCtx.createBiquadFilter(); lpf.type = 'lowpass'; lpf.frequency.value = 2520; lpf.Q.value = 0.707;
+        currentNode.connect(hpf); hpf.connect(lpf); currentNode = lpf;
+      } else if (b === 'High') {
+        const hpf = offlineCtx.createBiquadFilter(); hpf.type = 'highpass'; hpf.frequency.value = 2520; hpf.Q.value = 0.707;
+        currentNode.connect(hpf); currentNode = hpf;
+      }
+      if (aWeight) currentNode = applyAWeighting(offlineCtx, currentNode);
+
+      currentNode.connect(offlineCtx.destination);
+      source.start();
+      const rendered = await offlineCtx.startRendering();
+      const data = rendered.getChannelData(0);
+
+      const tau = tcMs / 1000.0;
+      const alpha = 1.0 - Math.exp(-1.0 / (sampleRate * tau));
+      const dbArray = new Float32Array(data.length);
+      let y = 0; let maxY = 0; let peakIdx = 0;
+      for (let i = 0; i < data.length; i++) {
+          y = alpha * (data[i] * data[i]) + (1 - alpha) * y;
+          if (y > maxY) { maxY = y; peakIdx = i; }
+          dbArray[i] = y;
+      }
+      for (let i = 0; i < data.length; i++) {
+          dbArray[i] = maxY > 0 && dbArray[i] > 0 ? 10 * Math.log10(dbArray[i] / maxY) : -120;
+      }
+
+      let d = rdfAnalysisData[b];
+      d.dbArray = dbArray;
+      d.peakIndex = peakIdx;
+
+      if (d.startIdx === -1) {
+          d.startIdx = getDbIndex(dbArray, peakIdx, -5);
+          d.endIdx = getDbIndex(dbArray, peakIdx, -25);
+      }
+      calcRdfForBand(b);
+    }
+  }
+
+  function calcRdfForBand(b) {
+    let d = rdfAnalysisData[b];
+    const start = Math.min(d.startIdx, d.endIdx);
+    const end = Math.max(d.startIdx, d.endIdx);
+    const N = end - start + 1;
+    d.levelStr = `${d.dbArray[start].toFixed(1)} 〜 ${d.dbArray[end].toFixed(1)} dB`;
+
+    if (N < 10) { d.rms = "-"; return; }
+
+    let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+    for (let i = start; i <= end; i++) {
+        let x = (i - start) / sampleRate;
+        let y = d.dbArray[i];
+        sumX += x; sumY += y; sumXY += x * y; sumXX += x * x;
+    }
+    const a = (N * sumXY - sumX * sumY) / (N * sumXX - sumX * sumX);
+    const b_val = (sumY - a * sumX) / N;
+
+    let sumSqErr = 0;
+    for (let i = start; i <= end; i++) {
+        let x = (i - start) / sampleRate;
+        let y = d.dbArray[i];
+        let err = y - (a * x + b_val);
+        sumSqErr += err * err;
+    }
+    d.rms = Math.sqrt(sumSqErr / N).toFixed(2);
+    d.a = a; d.b = b_val;
+  }
+
+  // --- RT UI Updates & Draws ---
+  function loadBandData(b) {
+    const data = analysisData[b];
+    currentSchroederDB = data.schroederDB; currentPeakIndex = data.peakIndex;
+    currentCursorStartIdx = data.cursorStartIdx; currentCursorEndIdx = data.cursorEndIdx;
+    
+    const viewStartIdx = Math.max(0, currentPeakIndex - Math.floor(sampleRate * 0.02));
+    const totalViewable = currentSchroederDB.length - viewStartIdx;
+    const targetDistance = Math.max(1, currentCursorEndIdx - viewStartIdx);
+    const calculatedZoom = (totalViewable * 0.7) / targetDistance;
+    zoomSlider.value = Math.max(1, Math.min(30, calculatedZoom)).toFixed(1);
+
+    document.getElementById('rt10').textContent = data.rt10;
+    document.getElementById('rt20').textContent = data.rt20;
+    document.getElementById('rt30').textContent = data.rt30;
+    drawDecayCurve(); updateManualRTDisplay();
+  }
+
+  function drawDecayCurve() {
+    if (!currentSchroederDB) return;
+    const width = decayCtx.canvas.width; const height = decayCtx.canvas.height;
+    const zoomX = parseFloat(zoomSlider.value);
+    decayCtx.clearRect(0, 0, width, height);
+    
+    decayCtx.strokeStyle = '#444'; decayCtx.lineWidth = 1; decayCtx.beginPath();
+    decayCtx.font = "10px sans-serif"; decayCtx.fillStyle = "#888";
+    for(let db = 0; db >= -60; db -= 10) {
+      let y = ((5 - db) / 70) * height;
+      decayCtx.moveTo(0, y); decayCtx.lineTo(width, y); decayCtx.fillText(db + "dB", 5, y - 2);
+    }
+    decayCtx.stroke();
+
+    const viewStartIdx = Math.max(0, currentPeakIndex - Math.floor(sampleRate * 0.02));
+    const totalViewable = currentSchroederDB.length - viewStartIdx;
+    const viewSamples = Math.floor(totalViewable / zoomX);
+    
+    decayCtx.beginPath(); decayCtx.strokeStyle = '#ffbb00'; decayCtx.lineWidth = 2;
+    const step = Math.max(1, viewSamples / width);
+    for (let i = 0; i < width; i++) {
+      const idx = Math.floor(viewStartIdx + i * step);
+      if (idx >= currentSchroederDB.length) break;
+      let y = ((5 - currentSchroederDB[idx]) / 70) * height; 
+      if (y > height) y = height; if (y < 0) y = 0;
+      if (i === 0) decayCtx.moveTo(i, y); else decayCtx.lineTo(i, y);
+    }
+    decayCtx.stroke();
+
+    const startX = ((currentCursorStartIdx - viewStartIdx) / viewSamples) * width;
+    const endX = ((currentCursorEndIdx - viewStartIdx) / viewSamples) * width;
+    
+    if(startX >= 0 && startX <= width) { decayCtx.beginPath(); decayCtx.strokeStyle = '#00e5ff'; decayCtx.moveTo(startX, 0); decayCtx.lineTo(startX, height); decayCtx.stroke(); }
+    if(endX >= 0 && endX <= width) { decayCtx.beginPath(); decayCtx.strokeStyle = '#ff1744'; decayCtx.moveTo(endX, 0); decayCtx.lineTo(endX, height); decayCtx.stroke(); }
+    
+    const fillStartX = Math.max(0, Math.min(width, startX));
+    const fillEndX = Math.max(0, Math.min(width, endX));
+    if(fillStartX !== fillEndX) {
+      decayCtx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+      decayCtx.fillRect(Math.min(fillStartX, fillEndX), 0, Math.abs(fillEndX - fillStartX), height);
+    }
+  }
+
+  function updateManualRTDisplay() {
+    if(!currentSchroederDB) return;
+    const startIdx = Math.min(currentCursorStartIdx, currentCursorEndIdx);
+    const endIdx = Math.max(currentCursorStartIdx, currentCursorEndIdx);
+    
+    document.getElementById('manual-level').textContent = `区間: ${currentSchroederDB[startIdx].toFixed(1)} 〜 ${currentSchroederDB[endIdx].toFixed(1)} dB`;
+
+    if(endIdx - startIdx < 10) { document.getElementById('manualResult').textContent = "- s"; return; }
+    let x = [], y = [];
+    for(let i = startIdx; i <= endIdx; i++) { x.push((i - currentPeakIndex) / sampleRate); y.push(currentSchroederDB[i]); }
+    let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0, n = x.length;
+    for (let i = 0; i < n; i++) { sumX += x[i]; sumY += y[i]; sumXY += x[i] * y[i]; sumXX += x[i] * x[i]; }
+    const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+    document.getElementById('manualResult').textContent = slope >= 0 ? "計算不可" : (-60 / slope).toFixed(2) + "s";
+  }
+
+  // --- 残響減衰変動 UI Updates & Draws ---
+  function loadRdfBandData(b) {
+    const d = rdfAnalysisData[b];
+    rdfDataRef = d;
+    const viewStartIdx = Math.max(0, d.peakIndex - Math.floor(sampleRate * 0.02));
+    const totalViewable = d.dbArray.length - viewStartIdx;
+    const targetDistance = Math.max(1, d.endIdx - viewStartIdx);
+    const calculatedZoom = (totalViewable * 0.7) / targetDistance;
+    rdfZoomSlider.value = Math.max(1, Math.min(30, calculatedZoom)).toFixed(1);
+
+    updateRdfDisplay();
+  }
+
+  function updateRdfDisplay() {
+    if(!rdfDataRef || !rdfDataRef.dbArray) return;
+    document.getElementById('rdfLevelInfo').textContent = `区間: ${rdfDataRef.levelStr}`;
+    document.getElementById('rdfResultRms').textContent = rdfDataRef.rms === "-" ? "- dB" : rdfDataRef.rms + " dB";
+    drawRdfCurve();
+  }
+
+  rdfTimeConstInput.addEventListener('change', async () => {
+      if(currentRawBuffer) {
+          statusDisplay.textContent = "残響減衰変動 再計算中...";
+          setTimeout(async () => { await processAllRdfBands(); loadRdfBandData(rdfBandSelect.value); updateDetailsTable(); statusDisplay.textContent = "解析完了"; }, 50);
+      }
+  });
+  rdfAWeightCheckbox.addEventListener('change', async () => {
+      if(currentRawBuffer) {
+          statusDisplay.textContent = "残響減衰変動 再計算中...";
+          setTimeout(async () => { await processAllRdfBands(); loadRdfBandData(rdfBandSelect.value); updateDetailsTable(); statusDisplay.textContent = "解析完了"; }, 50);
+      }
+  });
+  rdfBandSelect.addEventListener('change', () => {
+      if (rdfAnalysisData[rdfBandSelect.value] && rdfAnalysisData[rdfBandSelect.value].dbArray) loadRdfBandData(rdfBandSelect.value);
+  });
+  rdfZoomSlider.addEventListener('input', () => { drawRdfCurve(); });
+
+  // --- Details Table ---
+  detailsModeSelect.addEventListener('change', updateDetailsTable);
+
+  function updateDetailsTable() {
+    const mode = detailsModeSelect.value;
+    const thead = document.querySelector('#detailsTable thead');
+    const tbody = document.querySelector('#detailsTable tbody');
+    thead.innerHTML = ''; tbody.innerHTML = '';
+
+    if (mode === 'rt') {
+      thead.innerHTML = `<tr><th>帯域</th><th>RT10</th><th>RT20</th><th>RT30</th><th class="highlight-cell">手動 RT60</th><th>手動区間 (dB)</th></tr>`;
+      currentBands.forEach(b => {
+        const d = analysisData[b];
+        const bandName = b === 'overall' ? 'Overall' : (b >= 1000 ? (b/1000) + 'k' : b);
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${bandName}</td><td>${d.rt10}</td><td>${d.rt20}</td><td>${d.rt30}</td><td class="highlight-cell">${d.manualRt}</td><td style="font-size:0.75rem;">${d.manualLevelStr}</td>`;
+        tbody.appendChild(tr);
+      });
+    } else {
+      thead.innerHTML = `<tr><th>帯域</th><th class="highlight-cell">RMS偏差 (dB)</th><th>手動区間 (dB)</th></tr>`;
+      RDF_BANDS.forEach(b => {
+        const d = rdfAnalysisData[b];
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${b}</td><td class="highlight-cell" style="color:#e65100;">${d.rms}</td><td style="font-size:0.75rem;">${d.levelStr}</td>`;
+        tbody.appendChild(tr);
+      });
+    }
+  }
+
+  // --- Utility & Mouse Event Handlers ---
+  function getCanvasMouseX(e, canvasId) { 
+    const canvas = document.getElementById(canvasId);
+    const rect = canvas.getBoundingClientRect();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    return (clientX - rect.left) * (canvas.width / rect.width);
+  }
+
+  // RT Canvas Handlers
+  function handleDown(e) {
+    if (!currentSchroederDB) return;
+    const x = getCanvasMouseX(e, 'decayCanvas');
+    const width = decayCtx.canvas.width; const zoomX = parseFloat(zoomSlider.value);
+    const viewStartIdx = Math.max(0, currentPeakIndex - Math.floor(sampleRate * 0.02));
+    const viewSamples = Math.floor((currentSchroederDB.length - viewStartIdx) / zoomX);
+    const startX = ((currentCursorStartIdx - viewStartIdx) / viewSamples) * width;
+    const endX = ((currentCursorEndIdx - viewStartIdx) / viewSamples) * width;
+    if (Math.abs(x - startX) <= Math.abs(x - endX)) draggingCursor = 'start'; else draggingCursor = 'end';
+  }
+
+  function handleMove(e) {
+    if (!draggingCursor) return; e.preventDefault();
+    const x = Math.max(0, Math.min(getCanvasMouseX(e, 'decayCanvas'), decayCtx.canvas.width));
+    const zoomX = parseFloat(zoomSlider.value);
+    const viewStartIdx = Math.max(0, currentPeakIndex - Math.floor(sampleRate * 0.02));
+    const viewSamples = Math.floor((currentSchroederDB.length - viewStartIdx) / zoomX);
+    let targetIdx = Math.floor(viewStartIdx + (x / decayCtx.canvas.width) * viewSamples);
+    targetIdx = Math.max(0, Math.min(targetIdx, currentSchroederDB.length - 1));
+
+    if (draggingCursor === 'start') currentCursorStartIdx = Math.min(targetIdx, currentCursorEndIdx - 1); 
+    else currentCursorEndIdx = Math.max(targetIdx, currentCursorStartIdx + 1);
+    drawDecayCurve(); updateManualRTDisplay();
+  }
+
+  const canvasEl = document.getElementById('decayCanvas');
+  canvasEl.addEventListener('mousedown', handleDown); canvasEl.addEventListener('mousemove', handleMove); window.addEventListener('mouseup', () => draggingCursor = null);
+  canvasEl.addEventListener('touchstart', (e) => { e.preventDefault(); handleDown(e); }, {passive: false}); canvasEl.addEventListener('touchmove', handleMove, {passive: false}); window.addEventListener('touchend', () => draggingCursor = null);
+
+  // 残響減衰変動 Canvas Handlers
+  function handleRdfDown(e) {
+    if (!rdfDataRef || !rdfDataRef.dbArray) return;
+    const x = getCanvasMouseX(e, 'rdfCanvas');
+    const width = rdfCtx.canvas.width; const zoomX = parseFloat(rdfZoomSlider.value);
+    const viewStartIdx = Math.max(0, rdfDataRef.peakIndex - Math.floor(sampleRate * 0.02));
+    const viewSamples = Math.floor((rdfDataRef.dbArray.length - viewStartIdx) / zoomX);
+    const startX = ((rdfDataRef.startIdx - viewStartIdx) / viewSamples) * width;
+    const endX = ((rdfDataRef.endIdx - viewStartIdx) / viewSamples) * width;
+    if (Math.abs(x - startX) <= Math.abs(x - endX)) rdfDraggingCursor = 'start'; else rdfDraggingCursor = 'end';
+  }
+
+  function handleRdfMove(e) {
+    if (!rdfDraggingCursor) return; e.preventDefault();
+    const x = Math.max(0, Math.min(getCanvasMouseX(e, 'rdfCanvas'), rdfCtx.canvas.width));
+    const zoomX = parseFloat(rdfZoomSlider.value);
+    const viewStartIdx = Math.max(0, rdfDataRef.peakIndex - Math.floor(sampleRate * 0.02));
+    const viewSamples = Math.floor((rdfDataRef.dbArray.length - viewStartIdx) / zoomX);
+    let targetIdx = Math.floor(viewStartIdx + (x / rdfCtx.canvas.width) * viewSamples);
+    targetIdx = Math.max(0, Math.min(targetIdx, rdfDataRef.dbArray.length - 1));
+
+    if (rdfDraggingCursor === 'start') rdfDataRef.startIdx = Math.min(targetIdx, rdfDataRef.endIdx - 1); 
+    else rdfDataRef.endIdx = Math.max(targetIdx, rdfDataRef.startIdx + 1);
+    
+    calcRdfForBand(rdfBandSelect.value);
+    updateRdfDisplay();
+    updateDetailsTable();
+  }
+
+  const rdfCanvasEl = document.getElementById('rdfCanvas');
+  rdfCanvasEl.addEventListener('mousedown', handleRdfDown); rdfCanvasEl.addEventListener('mousemove', handleRdfMove); window.addEventListener('mouseup', () => rdfDraggingCursor = null);
+  rdfCanvasEl.addEventListener('touchstart', (e) => { e.preventDefault(); handleRdfDown(e); }, {passive: false}); rdfCanvasEl.addEventListener('touchmove', handleRdfMove, {passive: false}); window.addEventListener('touchend', () => rdfDraggingCursor = null);
+
+  function drawRdfCurve() {
+    if (!rdfDataRef || !rdfDataRef.dbArray) return;
+    const width = rdfCtx.canvas.width; const height = rdfCtx.canvas.height;
+    const zoomX = parseFloat(rdfZoomSlider.value);
+    rdfCtx.clearRect(0, 0, width, height);
+    
+    rdfCtx.strokeStyle = '#444'; rdfCtx.lineWidth = 1; rdfCtx.beginPath();
+    rdfCtx.font = "10px sans-serif"; rdfCtx.fillStyle = "#888";
+    for(let db = 0; db >= -60; db -= 10) {
+      let y = ((5 - db) / 70) * height;
+      rdfCtx.moveTo(0, y); rdfCtx.lineTo(width, y); rdfCtx.fillText(db + "dB", 5, y - 2);
+    }
+    rdfCtx.stroke();
+
+    const viewStartIdx = Math.max(0, rdfDataRef.peakIndex - Math.floor(sampleRate * 0.02));
+    const totalViewable = rdfDataRef.dbArray.length - viewStartIdx;
+    const viewSamples = Math.floor(totalViewable / zoomX);
+    
+    rdfCtx.beginPath(); rdfCtx.strokeStyle = '#a0a0a0'; rdfCtx.lineWidth = 1;
+    const step = Math.max(1, viewSamples / width);
+    for (let i = 0; i < width; i++) {
+      const idx = Math.floor(viewStartIdx + i * step);
+      if (idx >= rdfDataRef.dbArray.length) break;
+      let y = ((5 - rdfDataRef.dbArray[idx]) / 70) * height; 
+      if (y > height) y = height; if (y < 0) y = 0;
+      if (i === 0) rdfCtx.moveTo(i, y); else rdfCtx.lineTo(i, y);
+    }
+    rdfCtx.stroke();
+
+    const actStartIdx = Math.min(rdfDataRef.startIdx, rdfDataRef.endIdx);
+    const actEndIdx = Math.max(rdfDataRef.startIdx, rdfDataRef.endIdx);
+    const actStartX_px = ((actStartIdx - viewStartIdx) / viewSamples) * width;
+    const actEndX_px = ((actEndIdx - viewStartIdx) / viewSamples) * width;
+
+    if (rdfDataRef.rms !== "-" && actStartX_px <= width && actEndX_px >= 0) {
+      const x0_sec = 0; 
+      const x1_sec = (actEndIdx - actStartIdx) / sampleRate;
+      const y0_db = rdfDataRef.b;
+      const y1_db = rdfDataRef.a * x1_sec + rdfDataRef.b;
+
+      rdfCtx.beginPath(); rdfCtx.strokeStyle = '#ff1744'; rdfCtx.lineWidth = 2;
+      rdfCtx.moveTo(actStartX_px, ((5 - y0_db) / 70) * height);
+      rdfCtx.lineTo(actEndX_px, ((5 - y1_db) / 70) * height);
+      rdfCtx.stroke();
+
+      const rmsVal = parseFloat(rdfDataRef.rms);
+      rdfCtx.beginPath(); rdfCtx.setLineDash([5, 5]); rdfCtx.lineWidth = 1;
+      rdfCtx.moveTo(actStartX_px, ((5 - (y0_db + rmsVal)) / 70) * height); rdfCtx.lineTo(actEndX_px, ((5 - (y1_db + rmsVal)) / 70) * height);
+      rdfCtx.moveTo(actStartX_px, ((5 - (y0_db - rmsVal)) / 70) * height); rdfCtx.lineTo(actEndX_px, ((5 - (y1_db - rmsVal)) / 70) * height);
+      rdfCtx.stroke(); rdfCtx.setLineDash([]);
+    }
+
+    const startX = ((rdfDataRef.startIdx - viewStartIdx) / viewSamples) * width;
+    const endX = ((rdfDataRef.endIdx - viewStartIdx) / viewSamples) * width;
+    if(startX >= 0 && startX <= width) { rdfCtx.beginPath(); rdfCtx.strokeStyle = '#00e5ff'; rdfCtx.moveTo(startX, 0); rdfCtx.lineTo(startX, height); rdfCtx.stroke(); }
+    if(endX >= 0 && endX <= width) { rdfCtx.beginPath(); rdfCtx.strokeStyle = '#ff1744'; rdfCtx.moveTo(endX, 0); rdfCtx.lineTo(endX, height); rdfCtx.stroke(); }
+    const fillStartX = Math.max(0, Math.min(width, startX)); const fillEndX = Math.max(0, Math.min(width, endX));
+    if(fillStartX !== fillEndX) { rdfCtx.fillStyle = 'rgba(255, 255, 255, 0.1)'; rdfCtx.fillRect(Math.min(fillStartX, fillEndX), 0, Math.abs(fillEndX - fillStartX), height); }
+  }
+
+  // --- CSV Export ---
+  csvBtn.addEventListener('click', () => {
+    const mode = detailsModeSelect.value;
+    let csv = '\uFEFF'; 
+    if (mode === 'rt') {
+      csv += '帯域,自動RT10(s),自動RT20(s),自動RT30(s),手動RT60(s),手動区間(dB)\n';
+      currentBands.forEach(b => {
+        const d = analysisData[b];
+        const bandName = b === 'overall' ? 'Overall' : b;
+        csv += `${bandName},${d.rt10},${d.rt20},${d.rt30},${d.manualRt},${d.manualLevelStr}\n`;
+      });
+    } else {
+      csv += '帯域,RMS偏差(dB),手動区間(dB)\n';
+      RDF_BANDS.forEach(b => {
+        const d = rdfAnalysisData[b];
+        csv += `${b},${d.rms},${d.levelStr}\n`;
+      });
+    }
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url;
+    const now = new Date();
+    const timeStr = `${now.getFullYear()}${('0'+(now.getMonth()+1)).slice(-2)}${('0'+now.getDate()).slice(-2)}_${('0'+now.getHours()).slice(-2)}${('0'+now.getMinutes()).slice(-2)}`;
+    a.download = `RT_Estimator_for_NOE_${mode === 'rt' ? 'RT60' : '残響減衰変動'}_${timeStr}.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+  });
+</script>
+
+</body>
+</html>
